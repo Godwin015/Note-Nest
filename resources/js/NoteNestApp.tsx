@@ -1,0 +1,1247 @@
+import { useEffect, useState } from 'react';
+import { useEditor, EditorContent } from '@tiptap/react';
+import StarterKit from '@tiptap/starter-kit';
+import CharacterCount from '@tiptap/extension-character-count';
+import DOMPurify from 'dompurify';
+import './App.css';
+import {
+    AppShell,
+    Burger,
+    NavLink,
+    Group,
+    Text,
+    Title,
+    ActionIcon,
+    Tooltip,
+} from '@mantine/core';
+
+import { useDisclosure } from '@mantine/hooks';
+
+const MAX_ATTACHMENT_SIZE = 50 * 1024 * 1024;
+
+const ALLOWED_ATTACHMENT_TYPES = [
+  'application/pdf',
+  'application/msword',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  'text/plain',
+  'image/jpeg',
+  'image/png',
+  'image/webp',
+];
+
+
+type Note = {
+  id: number;
+  title: string;
+  content: string;
+  category: string | null;
+  color: string;
+  is_pinned: boolean;
+  created_at: string;
+  updated_at: string;
+};
+
+type PaginatedNotes = {
+  data: Note[];
+  current_page: number;
+  last_page: number;
+  total: number;
+};
+
+type NoteAttachment = {
+  id: number;
+  note_id: number;
+  original_name: string;
+  file_path: string;
+  mime_type: string;
+  file_size: number;
+  created_at: string;
+  updated_at: string;
+};
+
+const API_URL = '/api/notes';
+
+const NOTE_COLORS = [
+  { name: 'White', value: '#FFFFFF' },
+  { name: 'Lavender', value: '#EDE9FE' },
+  { name: 'Blue', value: '#DBEAFE' },
+  { name: 'Green', value: '#DCFCE7' },
+  { name: 'Yellow', value: '#FEF3C7' },
+  { name: 'Pink', value: '#FCE7F3' },
+  { name: 'Peach', value: '#FFEDD5' },
+];
+
+function formatModificationDate(date: string): string {
+  return new Date(date).toLocaleString(undefined, {
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+  });
+}
+
+function App() {
+  const [notes, setNotes] = useState<Note[]>([]);
+  const [search, setSearch] = useState('');
+  const [category, setCategory] = useState('');
+  const [page, setPage] = useState(1);
+  const [lastPage, setLastPage] = useState(1);
+  const [total, setTotal] = useState(0);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  const [showForm, setShowForm] = useState(false);
+  const [editingNote, setEditingNote] = useState<Note | null>(null);
+  const [title, setTitle] = useState('');
+  const [content, setContent] = useState('');
+  const [noteCategory, setNoteCategory] = useState('personal');
+  const [noteColor, setNoteColor] = useState('#FFFFFF');
+  const [saving, setSaving] = useState(false);
+  const [attachments, setAttachments] = useState<NoteAttachment[]>([]);
+  const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
+  const [attachmentLoading, setAttachmentLoading] = useState(false);
+  const [attachmentUploading, setAttachmentUploading] = useState(false);
+  const [attachmentError, setAttachmentError] = useState('');
+  const [uploadProgress, setUploadProgress] = useState(0);
+  const [sidebarOpened, { toggle: toggleSidebar }] = useDisclosure();
+  const [pinnedOnly, setPinnedOnly] = useState(false);
+  const editor = useEditor({
+    extensions: [
+      StarterKit,
+      CharacterCount.configure({
+        limit: 5000,
+      }),
+    ],
+    content: content,
+    onUpdate: ({ editor }) => {
+      setContent(editor.getHTML());
+    },
+  });
+
+  async function loadNotes(
+    nextPage = page,
+    nextSearch = search,
+    nextCategory = category,
+    nextPinnedOnly = pinnedOnly,
+  ) {
+    setLoading(true);
+    setError('');
+
+    try {
+      const params = new URLSearchParams({
+        page: String(nextPage),
+      });
+
+      if (nextSearch.trim()) params.set('search', nextSearch.trim());
+      if (nextCategory) params.set('category', nextCategory);
+      if (nextPinnedOnly) params.set('is_pinned', '1');
+
+      const response = await fetch(`${API_URL}?${params}`);
+
+      if (!response.ok) {
+        throw new Error('Unable to load notes. Please try again.');
+      }
+
+      const result: PaginatedNotes = await response.json();
+
+      setNotes(result.data);
+      setPage(result.current_page);
+      setLastPage(result.last_page);
+      setTotal(result.total);
+    } catch {
+      setError(
+        'Could not connect to the server. Make sure your Laravel backend is running.',
+      );
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  
+  async function loadAttachments(noteId: number) {
+    setAttachmentLoading(true);
+    setAttachmentError('');
+
+    try {
+      const response = await fetch(`${API_URL}/${noteId}/attachments`, {
+        headers: {
+          Accept: 'application/json',
+        },
+      });
+
+      if (!response.ok) {
+        throw new Error('Unable to load attachments.');
+      }
+
+      const result = await response.json();
+
+      const attachmentList: NoteAttachment[] = Array.isArray(result)
+        ? result
+        : Array.isArray(result.data)
+          ? result.data
+          : [];
+
+      setAttachments(attachmentList);
+    } catch (err) {
+      setAttachments([]);
+
+      setAttachmentError(
+        err instanceof Error
+          ? err.message
+          : 'Unable to load attachments.',
+      );
+    } finally {
+      setAttachmentLoading(false);
+    }
+  }
+
+
+
+function handleFileSelection(
+  event: React.ChangeEvent<HTMLInputElement>,
+) {
+  const files = Array.from(event.target.files ?? []);
+
+  setAttachmentError('');
+
+  const remainingSlots =
+    5 - attachments.length - selectedFiles.length;
+
+  if (files.length > remainingSlots) {
+    setAttachmentError(
+      `You can attach a maximum of 5 files to a note. You can select ${Math.max(remainingSlots, 0)} more file(s).`,
+    );
+
+    event.target.value = '';
+    return;
+  }
+
+  for (const file of files) {
+    if (file.size > MAX_ATTACHMENT_SIZE) {
+      setAttachmentError(
+        `${file.name} is too large. Maximum allowed size is 50 MB.`,
+      );
+
+      event.target.value = '';
+      return;
+    }
+
+    if (!ALLOWED_ATTACHMENT_TYPES.includes(file.type)) {
+      setAttachmentError(
+        `${file.name} has an unsupported file type.`,
+      );
+
+      event.target.value = '';
+      return;
+    }
+  }
+
+  setSelectedFiles((previous) => [...previous, ...files]);
+
+  event.target.value = '';
+}
+
+
+
+
+
+  function uploadAttachment(file: File) {
+    
+    if (!editingNote) return;
+
+    setAttachmentError('');
+
+    if (file.size > MAX_ATTACHMENT_SIZE) {
+      setAttachmentError(
+        'File is too large. Maximum allowed size is 50 MB.',
+      );
+      return;
+    }
+
+    if (!ALLOWED_ATTACHMENT_TYPES.includes(file.type)) {
+      setAttachmentError(
+        'Unsupported file type. Please upload PDF, DOC, DOCX, TXT, JPG, PNG, or WEBP.',
+      );
+      return;
+    }
+
+    if (attachments.length >= 5) {
+      setAttachmentError(
+        'You can attach a maximum of 5 files to a note.',
+      );
+      return;
+    }
+
+    setAttachmentUploading(true);
+
+    setUploadProgress(0);
+    setAttachmentError('');
+
+    const formData = new FormData();
+    formData.append('file', file);
+
+    const xhr = new XMLHttpRequest();
+
+    xhr.open(
+      'POST',
+      `${API_URL}/${editingNote.id}/attachments`,
+    );
+
+    xhr.setRequestHeader('Accept', 'application/json');
+
+    xhr.upload.onprogress = (event) => {
+      if (event.lengthComputable) {
+        const percentage = Math.round(
+          (event.loaded / event.total) * 100,
+        );
+
+        setUploadProgress(percentage);
+      }
+    };
+
+    xhr.onload = async () => {
+      try {
+        const result = JSON.parse(xhr.responseText);
+
+        if (xhr.status < 200 || xhr.status >= 300) {
+          const validationMessage = result.errors
+            ? Object.values(result.errors).flat().join(' ')
+            : result.message;
+
+          throw new Error(
+            validationMessage || 'Unable to upload attachment.',
+          );
+        }
+
+        setUploadProgress(100);
+
+        await loadAttachments(editingNote.id);
+      } catch (err) {
+        setAttachmentError(
+          err instanceof Error
+            ? err.message
+            : 'Unable to upload attachment.',
+        );
+      } finally {
+        setAttachmentUploading(false);
+      }
+    };
+
+    xhr.onerror = () => {
+      setAttachmentError(
+        'Network error. Unable to upload attachment.',
+      );
+
+      setAttachmentUploading(false);
+    };
+
+    xhr.onabort = () => {
+      setAttachmentError('Attachment upload was cancelled.');
+      setAttachmentUploading(false);
+    };
+
+    xhr.send(formData);
+  }
+
+
+async function uploadSelectedFiles(
+  noteId: number,
+  files: File[],
+) {
+  for (const file of files) {
+    const formData = new FormData();
+
+    formData.append('file', file);
+
+    const response = await fetch(
+      `${API_URL}/${noteId}/attachments`,
+      {
+        method: 'POST',
+        headers: {
+          Accept: 'application/json',
+        },
+        body: formData,
+      },
+    );
+
+    const result = await response.json();
+
+    if (!response.ok) {
+      const validationMessage = result.errors
+        ? Object.values(result.errors).flat().join(' ')
+        : result.message;
+
+      throw new Error(
+        validationMessage || `Unable to upload ${file.name}.`,
+      );
+    }
+  }
+}
+
+
+
+  async function deleteAttachment(attachmentId: number) {
+    if (!editingNote) return;
+
+    const confirmed = window.confirm(
+      'Are you sure you want to delete this attachment?',
+    );
+
+    if (!confirmed) return;
+
+    setAttachmentError('');
+
+    try {
+      const response = await fetch(
+        `${API_URL}/${editingNote.id}/attachments/${attachmentId}`,
+        {
+          method: 'DELETE',
+          headers: {
+            Accept: 'application/json',
+          },
+        },
+      );
+
+      const result = await response.json();
+
+      if (!response.ok) {
+        throw new Error(
+          result.message || 'Unable to delete attachment.',
+        );
+      }
+
+      await loadAttachments(editingNote.id);
+    } catch (err) {
+      setAttachmentError(
+        err instanceof Error
+          ? err.message
+          : 'Unable to delete attachment.',
+      );
+    }
+  }
+
+
+
+  
+  useEffect(() => {
+    let cancelled = false;
+
+    async function fetchInitialNotes() {
+      try {
+        const response = await fetch(`${API_URL}?page=1`);
+
+        if (!response.ok) {
+          throw new Error('Unable to load notes.');
+        }
+
+        const result: PaginatedNotes = await response.json();
+
+        if (cancelled) return;
+
+        setNotes(result.data);
+        setPage(result.current_page);
+        setLastPage(result.last_page);
+        setTotal(result.total);
+      } catch {
+        if (!cancelled) {
+          setError(
+            'Could not connect to the server. Make sure your Laravel backend is running.',
+          );
+        }
+      } finally {
+        if (!cancelled) {
+          setLoading(false);
+        }
+      }
+    }
+
+    void fetchInitialNotes();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+
+  function openCreateForm() {
+  setEditingNote(null);
+  setAttachments([]);
+  setSelectedFiles([]);
+  setAttachmentError('');
+  setTitle('');
+  setContent('');
+  editor?.commands.clearContent();
+  setNoteCategory('personal');
+  setNoteColor('#FFFFFF');
+  setShowForm(true);
+}
+
+  function openEditForm(note: Note) {
+    setEditingNote(note);
+    setAttachments([]);
+    setAttachmentError('');
+    void loadAttachments(note.id);
+    setTitle(note.title);
+    setContent(note.content);
+    editor?.commands.setContent(note.content);
+    setNoteCategory(note.category ?? 'personal');
+    setNoteColor(note.color ?? '#FFFFFF');
+    setShowForm(true);
+  }
+
+  
+  async function saveNote(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+
+    setSaving(true);
+    setError('');
+    setAttachmentError('');
+
+    try {
+      const isEditing = editingNote !== null;
+
+      const response = await fetch(
+        isEditing ? `${API_URL}/${editingNote.id}` : API_URL,
+        {
+          method: isEditing ? 'PATCH' : 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Accept: 'application/json',
+          },
+          body: JSON.stringify({
+            title: title.trim(),
+            content: editor?.getHTML() ?? '',
+            category: noteCategory || null,
+            color: noteColor,
+          }),
+        },
+      );
+
+      const result = await response.json();
+
+      if (!response.ok) {
+        const validationMessage = result.errors
+          ? Object.values(result.errors).flat().join(' ')
+          : result.message;
+
+        throw new Error(
+          validationMessage || 'Unable to save this note.',
+        );
+      }
+
+      if (!isEditing && selectedFiles.length > 0) {
+        await uploadSelectedFiles(result.data.id, selectedFiles);
+      }
+
+      setSelectedFiles([]);
+      setShowForm(false);
+
+      await loadNotes(1, search, category);
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : 'Something went wrong.',
+      );
+    } finally {
+      setSaving(false);
+    }
+  }
+
+
+  async function deleteNote(note: Note) {
+    if (!window.confirm(`Delete "${note.title}"? This cannot be undone.`)) {
+      return;
+    }
+
+    try {
+      const response = await fetch(`${API_URL}/${note.id}`, {
+        method: 'DELETE',
+        headers: { Accept: 'application/json' },
+      });
+
+      if (!response.ok) throw new Error('Unable to delete this note.');
+
+      await loadNotes(page, search, category);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Delete failed.');
+    }
+  }
+
+  async function togglePin(note: Note) {
+    try {
+      const response = await fetch(`${API_URL}/${note.id}/pin`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          Accept: 'application/json',
+        },
+        body: JSON.stringify({ is_pinned: !note.is_pinned }),
+      });
+
+      if (!response.ok) throw new Error('Unable to update pin status.');
+
+      await loadNotes(page, search, category);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Pin update failed.');
+    }
+  }
+
+  function changeSearch(value: string) {
+    setSearch(value);
+    setPage(1);
+    void loadNotes(1, value, category);
+  }
+
+  function changeCategory(value: string) {
+    setCategory(value);
+    setPage(1);
+    void loadNotes(1, search, value);
+  }
+
+  return (
+    <AppShell
+        header={{ height: 70 }}
+        navbar={{
+            width: 250,
+            breakpoint: 'sm',
+            collapsed: {
+                mobile: !sidebarOpened,
+                desktop: false,
+            },
+        }}
+        padding="md"
+    >
+    <AppShell.Header>
+      <Group h="100%" px="md" justify="space-between">
+          <Group>
+              <Burger
+                  opened={sidebarOpened}
+                  onClick={toggleSidebar}
+                  hiddenFrom="sm"
+                  size="sm"
+                  aria-label="Toggle navigation"
+              />
+
+              <Group gap="xs">
+                  <span className="brand-icon">N</span>
+
+                  <Title order={3}>
+                      NoteNest
+                  </Title>
+              </Group>
+          </Group>
+
+          <Tooltip label="Create a new note">
+              <ActionIcon
+                  variant="filled"
+                  color="indigo"
+                  size="lg"
+                  onClick={openCreateForm}
+                  aria-label="Create a new note"
+              >
+                  +
+              </ActionIcon>
+          </Tooltip>
+      </Group>
+  </AppShell.Header>
+  <AppShell.Navbar p="md">
+    <Text fw={700} size="sm" mb="md">
+        WORKSPACE
+    </Text>
+
+    <NavLink
+        label="All notes"
+        active
+        leftSection={<span>📝</span>}
+        onClick={() => {
+          setPinnedOnly(false);
+          changeCategory('');
+        }}
+    />
+
+    <NavLink
+        label="Pinned notes"
+        active={pinnedOnly}
+        leftSection={<span>📌</span>}
+        onClick={() => {
+            setPinnedOnly(true);
+            setCategory('');
+            setPage(1);
+            void loadNotes(1, search, '', true);
+            }}
+    />
+
+    <NavLink
+        label="Personal"
+        leftSection={<span>👤</span>}
+        onClick={() => changeCategory('personal')}
+    />
+
+    <NavLink
+        label="Work"
+        leftSection={<span>💼</span>}
+        onClick={() => changeCategory('work')}
+    />
+
+    <NavLink
+        label="Learning"
+        leftSection={<span>📚</span>}
+        onClick={() => changeCategory('learning')}
+    />
+</AppShell.Navbar>
+
+<AppShell.Main>
+
+      
+    <section className="hero">
+      <div className="hero-content">
+        <div className="hero-badge">
+          <span className="hero-badge-dot"></span>
+          YOUR NEST OF THOUGHTS
+        </div>
+
+        <h1>
+          Your thoughts,
+          <br />
+          <span>beautifully organized.</span>
+        </h1>
+
+        <p className="hero-description">
+          Capture stray thoughts, fleeting genius, and things you swore you 
+          wouldn't forget before lunch. Your brain is for having ideas, not 
+          holding them.
+        </p>
+
+        <div className="hero-actions">
+          <button
+            className="hero-create-button"
+            onClick={openCreateForm}
+          >
+            <span>＋</span>
+            Capture a thought
+          </button>
+
+          <span className="hero-supporting-text">
+            Your thoughts are powerful
+          </span>
+        </div>
+      </div>
+
+      <div className="hero-decoration" aria-hidden="true">
+        <div className="hero-glow"></div>
+
+        <div className="hero-floating-card hero-card-one">
+          <span className="hero-card-icon">✦</span>
+          <div>
+            <strong>New ideas</strong>
+            <small>Capture your inspiration</small>
+          </div>
+        </div>
+
+        <div className="hero-floating-card hero-card-two">
+          <span className="hero-card-icon">✓</span>
+          <div>
+            <strong>Stay organized</strong>
+            <small>Everything in its place</small>
+          </div>
+        </div>
+
+        <div className="hero-orbit"></div>
+        <div className="hero-orbit-dot"></div>
+      </div>
+    </section>
+
+
+      <section className="notes-section">
+        <div className="section-heading">
+          <div>
+            <h2>Your notes</h2>
+            <p>{total} {total === 1 ? 'note' : 'notes'} in your workspace</p>
+          </div>
+          <button className="secondary-button" onClick={openCreateForm}>
+            + Capture a thought
+          </button>
+        </div>
+
+        <div className="toolbar">
+          <label className="search-box">
+            <span aria-hidden="true">⌕</span>
+            <input
+              value={search}
+              onChange={(event) => changeSearch(event.target.value)}
+              placeholder="Search your notes..."
+              aria-label="Search notes"
+            />
+          </label>
+
+          <select
+            value={category}
+            onChange={(event) => changeCategory(event.target.value)}
+            aria-label="Filter notes by category"
+          >
+            <option value="">All categories</option>
+            <option value="personal">Personal</option>
+            <option value="work">Work</option>
+            <option value="learning">Learning</option>
+          </select>
+        </div>
+
+        {error && (
+          <div className="error-message" role="alert">
+            {error}
+          </div>
+        )}
+
+        {loading ? (
+          <div className="state-message">Loading your notes...</div>
+        ) : notes.length === 0 ? (
+          <div className="empty-state">
+            <div className="empty-icon">✎</div>
+            <h3>{search || category ? 'No matching notes' : 'A little space for your ideas'}</h3>
+            <p>
+              {search || category
+                ? 'Try another search or change your category filter.'
+                : 'Create your first note and get your thoughts flowing.'}
+            </p>
+            {!search && !category && (
+              <button className="primary-button" onClick={openCreateForm}>
+                Create your first note
+              </button>
+            )}
+          </div>
+        ) : (
+          <>
+            <div className="notes-grid">
+              {notes.map((note) => (
+                  <article
+                    className="note-card"
+                    key={note.id}
+                    style={{ backgroundColor: note.color || '#FFFFFF' }}
+                  >
+                  <div className="note-card-top">
+                    <span className={`category-tag ${note.category ?? 'uncategorized'}`}>
+                      {note.category ?? 'Uncategorized'}
+                    </span>
+                    <button
+                      className={`icon-button ${note.is_pinned ? 'pinned' : ''}`}
+                      onClick={() => void togglePin(note)}
+                      aria-label={note.is_pinned ? 'Unpin note' : 'Pin note'}
+                      title={note.is_pinned ? 'Unpin note' : 'Pin note'}
+                    >
+                      {note.is_pinned ? '📌' : '♧'}
+                    </button>
+                  </div>
+
+                  <h3>{note.title}</h3>
+                  <div
+                    className="note-content"
+                    dangerouslySetInnerHTML={{
+                      __html: DOMPurify.sanitize(note.content),
+                    }}
+                  />
+
+                  <div className="note-card-footer">
+                    <span>
+                      Updated {formatModificationDate(note.updated_at)}
+                    </span>
+                    <div className="note-actions">
+                      <button onClick={() => openEditForm(note)}>Edit</button>
+                      <button
+                        className="delete-action"
+                        onClick={() => void deleteNote(note)}
+                      >
+                        Delete
+                      </button>
+                    </div>
+                  </div>
+                </article>
+              ))}
+            </div>
+
+            <div className="pagination">
+              <button
+                className="secondary-button"
+                disabled={page <= 1}
+                onClick={() => void loadNotes(page - 1)}
+              >
+                Previous
+              </button>
+              <span>Page {page} of {lastPage}</span>
+              <button
+                className="secondary-button"
+                disabled={page >= lastPage}
+                onClick={() => void loadNotes(page + 1)}
+              >
+                Next
+              </button>
+            </div>
+          </>
+        )}
+      </section>
+
+      <footer className="app-footer">
+        <span>NoteNest</span>
+        <span>A calmer place for your thoughts.</span>
+      </footer>
+
+      {showForm && (
+        <div
+          className="modal-backdrop"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) setShowForm(false);
+          }}
+        >
+          <section
+            className="note-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="note-form-title"
+          >
+            <div className="modal-heading">
+              <div>
+                <p className="eyebrow">{editingNote ? 'REFINE YOUR IDEAS' : 'CAPTURE AN IDEA'}</p>
+                <h2 id="note-form-title">
+                  {editingNote ? 'Edit note' : 'Create a note'}
+                </h2>
+                {editingNote && (
+                  <p className="note-modified-date">
+                    Last modified {formatModificationDate(editingNote.updated_at)}
+                  </p>
+                )}
+              </div>
+              <button
+                type="button"
+                className="icon-button"
+                onClick={() => setShowForm(false)}
+                aria-label="Close form"
+                title="Close form"
+              >
+                ×
+              </button>
+            </div>
+            <form onSubmit={(event) => void saveNote(event)}>
+              <label>
+                Note title
+                <input
+                  value={title}
+                  onChange={(event) => setTitle(event.target.value)}
+                  minLength={3}
+                  maxLength={120}
+                  required
+                  placeholder="Give your note a title"
+                />
+              </label>
+
+              <label className="editor-label">
+              Content              
+              <div className="tiptap-toolbar">
+                <button
+                  type="button"
+                  onClick={() => editor?.chain().focus().toggleBold().run()}
+                  disabled={!editor}
+                  aria-label="Bold"
+                  title="Bold"
+                >
+                  <strong>B</strong>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => editor?.chain().focus().toggleItalic().run()}
+                  disabled={!editor}
+                  aria-label="Italic"
+                  title="Italic"
+                >
+                  <em>I</em>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => editor?.chain().focus().toggleUnderline().run()}
+                  disabled={!editor}
+                  aria-label="Underline"
+                  title="Underline"
+                >
+                  <u>U</u>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => editor?.chain().focus().toggleHeading({ level: 2 }).run()}
+                  disabled={!editor}
+                  aria-label="Heading"
+                  title="Heading"
+                >
+                  H
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => editor?.chain().focus().toggleBulletList().run()}
+                  disabled={!editor}
+                  aria-label="Bullet list"
+                  title="Bullet list"
+                >
+                  •
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => editor?.chain().focus().toggleOrderedList().run()}
+                  disabled={!editor}
+                  aria-label="Numbered list"
+                  title="Numbered list"
+                >
+                  1.
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => editor?.chain().focus().undo().run()}
+                  disabled={!editor}
+                  aria-label="Undo"
+                  title="Undo"
+                >
+                  ↶
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => editor?.chain().focus().redo().run()}
+                  disabled={!editor}
+                  aria-label="Redo"
+                  title="Redo"
+                >
+                  ↷
+                </button>
+              </div>
+
+              <div className="tiptap-editor">
+                <EditorContent editor={editor} />
+              </div>
+
+              <span className="character-count">
+                {editor?.storage.characterCount.characters() ?? 0}/5000 characters
+              </span>
+            </label>
+
+              <label>
+                Category
+                <select
+                  value={noteCategory}
+                  onChange={(event) => setNoteCategory(event.target.value)}
+                >
+                  <option value="personal">Personal</option>
+                  <option value="work">Work</option>
+                  <option value="learning">Learning</option>
+                </select>
+              </label>
+              <div className="form-group">
+              <label htmlFor="note-color">Note Color</label>
+
+              <div className="note-color-palette">
+                {NOTE_COLORS.map((color) => (
+                  <button
+                    key={color.value}
+                    type="button"
+                    className={`color-swatch ${
+                      noteColor === color.value ? 'selected' : ''
+                    }`}
+                    style={{ backgroundColor: color.value }}
+                    onClick={() => setNoteColor(color.value)}
+                    aria-label={`Select ${color.name} color`}
+                    title={color.name}
+                  >
+                    {noteColor === color.value && '✓'}
+                  </button>
+                ))}
+              </div>
+
+              <input
+                id="note-color"
+                type="color"
+                value={noteColor}
+                onChange={(e) => setNoteColor(e.target.value)}
+              />
+            </div>
+
+            <div className="attachment-section">
+              <h3>Attachments</h3>
+
+              <input
+                type="file"
+                multiple
+                accept=".pdf,.doc,.docx,.txt,.jpg,.jpeg,.png,.webp"
+                onChange={handleFileSelection}
+                disabled={saving || attachmentUploading}
+              />
+
+              {selectedFiles.length > 0 && (
+                <ul className="attachment-list">
+                  {selectedFiles.map((file, index) => (
+                    <li
+                      key={`${file.name}-${file.size}-${index}`}
+                      className="attachment-item"
+                    >
+                      <div className="attachment-info">
+                        <strong>{file.name}</strong>
+
+                        <span className="attachment-meta">
+                          {(file.size / 1024).toFixed(1)} KB
+                        </span>
+                      </div>
+
+                      <button
+                        type="button"
+                        className="attachment-delete"
+                        onClick={() => {
+                          setSelectedFiles((previous) =>
+                            previous.filter((_, fileIndex) => fileIndex !== index),
+                          );
+                        }}
+                        disabled={saving}
+                      >
+                        Remove
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+
+              {attachmentError && (
+                <p role="alert" className="attachment-error">
+                  {attachmentError}
+                </p>
+              )}
+            </div>
+
+            {editingNote && (
+              <div className="attachment-section">
+                <h3>Attachments</h3>                
+                {attachmentUploading && (
+                  <div className="attachment-progress" role="status">
+                    <div className="attachment-progress-label">
+                      <span>Uploading attachment...</span>
+                      <span>{uploadProgress}%</span>
+                    </div>
+
+                    <div className="attachment-progress-track">
+                      <div
+                        className="attachment-progress-fill"
+                        style={{ width: `${uploadProgress}%` }}
+                      />
+                    </div>
+                  </div>
+                )}
+
+                {attachmentLoading ? (
+                  <p>Loading attachments...</p>
+                ) : attachments.length === 0 ? (
+                  <p>No attachments yet.</p>
+                ) : (
+                  <ul className="attachment-list">
+                    {attachments.map((attachment) => (
+                      
+                    <li key={attachment.id} className="attachment-item">
+                      <div className="attachment-info">
+                        {attachment.mime_type.startsWith('image/') && (
+                          <img
+                            className="attachment-preview"
+                            src={`/storage/${attachment.file_path}`}
+                            alt={attachment.original_name}
+                            loading="lazy"
+                          />
+                        )}
+
+                        <strong>{attachment.original_name}</strong>
+
+                        <span className="attachment-meta">
+                          {attachment.mime_type} ·{' '}
+                          {(attachment.file_size / 1024).toFixed(1)} KB
+                        </span>
+                      </div>
+
+                      <div className="attachment-actions">
+                        <a
+                          className="attachment-download"
+                          href={`${API_URL}/${editingNote.id}/attachments/${attachment.id}/download`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                        >
+                          Download
+                        </a>
+
+                        <button
+                          type="button"
+                          className="attachment-delete"
+                          onClick={() => void deleteAttachment(attachment.id)}
+                          disabled={attachmentUploading}
+                        >
+                          Delete
+                        </button>
+                      </div>
+                    </li>
+
+                    ))}
+                  </ul>
+                )}
+
+                {attachmentError && (
+                  <div className="error-message" role="alert">
+                    {attachmentError}
+                  </div>
+                )}
+
+                <label htmlFor="note-attachment">
+                  Choose a file
+                </label>
+
+                {attachmentUploading && (
+                  <p className="attachment-status" role="status">
+                    Uploading attachment...
+                  </p>
+                )}
+              <input
+                id="note-attachment"
+                type="file"
+                accept=".pdf,.doc,.docx,.txt,.jpg,.jpeg,.png,.webp"
+                disabled={attachmentUploading || saving}
+                onChange={(event) => {
+                  const file = event.target.files?.[0];
+
+                  if (file) {
+                    void uploadAttachment(file);
+                  }
+
+                  event.target.value = '';
+                }}
+              />
+
+              </div>
+            )}
+
+              {error && <div className="error-message">{error}</div>}
+
+              <div className="modal-actions">
+                <button
+                  type="button"
+                  className="secondary-button"
+                  onClick={() => setShowForm(false)}
+                >
+                  Cancel
+                </button>
+                <button className="primary-button" type="submit" disabled={saving}>
+                  {saving ? 'Saving...' : editingNote ? 'Save changes' : 'Create note'}
+                </button>
+              </div>
+            </form>
+          </section>
+        </div>
+      )}
+        </AppShell.Main>
+</AppShell>
+);
+}
+
+export default App;

@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>NoteNest Attachment Test</title>
+</head>
+<body>
+    <h1>NoteNest Attachment Upload</h1>
+
+    <form id="uploadForm">
+        <label for="noteId">Note ID:</label>
+        <input type="number" id="noteId" min="1" required>
+
+        <br><br>
+
+        <label for="file">Select attachment:</label>
+        <input type="file" id="file" required>
+
+        <br><br>
+
+        <button type="submit">Upload Attachment</button>
+    </form>
+
+    <h3>Response</h3>
+    <pre id="response">Waiting for upload...</pre>
+
+    <script>
+        const form = document.getElementById('uploadForm');
+        const responseBox = document.getElementById('response');
+
+        form.addEventListener('submit', async function (event) {
+            event.preventDefault();
+
+            const noteId = document.getElementById('noteId').value;
+            const file = document.getElementById('file').files[0];
+
+            if (!file) {
+                responseBox.textContent = 'Please select a file.';
+                return;
+            }
+
+            const formData = new FormData();
+            formData.append('file', file);
+
+            responseBox.textContent = 'Uploading...';
+
+            try {
+                const response = await fetch(
+                    `/api/notes/${noteId}/attachments`,
+                    {
+                        method: 'POST',
+                        body: formData
+                    }
+                );
+
+                
+                const responseText = await response.text();
+
+                responseBox.textContent =
+                    `HTTP Status: ${response.status}\n\n` +
+                    `Response:\n${responseText}`;
+
+
+            } catch (error) {
+                responseBox.textContent = error.message;
+            }
+        });
+    </script>
+</body>
+</html>
