@@ -169,18 +169,25 @@
 
 /* Search and filters */
 
+/* Search and filters */
+
 .toolbar {
   display: flex;
+  align-items: stretch;
   gap: 13px;
+  width: 100%;
   margin: 28px 0;
+  box-sizing: border-box;
 }
 
 .search-box {
   display: flex;
   align-items: center;
-  flex: 1;
+  flex: 1 1 0;
   gap: 12px;
   min-width: 0;
+  height: 48px;
+  box-sizing: border-box;
   padding: 0 16px;
   background: white;
   border: 1px solid #e8e4ef;
@@ -194,13 +201,17 @@
 }
 
 .search-box > span {
+  flex-shrink: 0;
   color: #8d87a2;
   font-size: 24px;
 }
 
 .search-box input {
+  flex: 1;
+  min-width: 0;
   width: 100%;
-  min-height: 48px;
+  height: 100%;
+  min-height: 0;
   padding: 0;
   color: #37324f;
   background: transparent;
@@ -226,6 +237,14 @@
   font-size: 12px;
   cursor: pointer;
 }
+
+.toolbar select {
+  flex: 0 0 190px;
+  width: 190px;
+  height: 48px;
+  box-sizing: border-box;
+}
+
 
 /* Notes grid */
 
@@ -472,31 +491,6 @@
   font-weight: 750;
 }
 
-/* Note editor modal */
-
-.modal-backdrop {
-  position: fixed;
-  z-index: 10;
-  inset: 0;
-  display: grid;
-  place-items: center;
-  padding: 20px;
-  background: #211a3b80;
-  backdrop-filter: blur(5px);
-  overflow-y: auto;
-}
-
-.note-modal {
-  width: min(540px, 100%);
-  max-height: calc(100vh - 40px);
-  padding: 30px;
-  background: white;
-  border: 1px solid #eee9f5;
-  border-radius: 22px;
-  box-shadow: 0 25px 90px #1d193b35;
-  overflow-y: auto;
-}
-
 .modal-heading {
   display: flex;
   align-items: flex-start;
@@ -608,13 +602,23 @@
     grid-template-columns: 1fr;
   }
 
+  
   .toolbar {
     flex-direction: column;
+    align-items: stretch;
+    gap: 10px;
+  }
+
+  .search-box {
+    flex: 1 1 auto;
+    width: 100%;
   }
 
   .toolbar select {
+    flex: 1 1 auto;
     width: 100%;
   }
+
 
   .section-heading {
     align-items: flex-start;
@@ -682,8 +686,16 @@
 
 /* TipTap rich text editor */
 
-.editor-label {
-  display: block;
+.editor-field {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+}
+
+.editor-field-label {
+  color: #47425c;
+  font-size: 12px;
+  font-weight: 750;
 }
 
 .tiptap-toolbar {
@@ -745,6 +757,8 @@
   min-height: 160px;
   outline: none;
   color: #302d47;
+  cursor: text;
+  white-space: pre-wrap;
   font-family: Arial, sans-serif;
   font-size: 14px;
   font-weight: 400;
@@ -1747,41 +1761,42 @@
 
 
 /* =========================================
-   NOTENEST MODAL - VIEWPORT FIX
+   NOTENEST MODAL - FINAL LAYOUT
 ========================================= */
 
 .modal-backdrop {
   position: fixed;
-  z-index: 1000;
+  z-index: 9999;
   inset: 0;
 
   display: flex;
   align-items: center;
   justify-content: center;
 
+  box-sizing: border-box;
   padding: 20px;
 
   background: rgba(33, 26, 59, 0.55);
   backdrop-filter: blur(8px);
 
-  overflow: hidden;
+  overflow-y: auto;
 }
-
-/* Modal container */
 
 .note-modal {
   position: relative;
 
   width: min(540px, 100%);
+  max-height: calc(100vh - 40px);
   max-height: calc(100dvh - 40px);
 
   display: flex;
   flex-direction: column;
 
+  box-sizing: border-box;
   padding: 0;
+  margin: auto;
 
-  background: #ffffff;
-
+  background: #fff;
   border: 1px solid #eee9f5;
   border-radius: 22px;
 
@@ -1792,90 +1807,75 @@
   overflow: hidden;
 }
 
-/* Sticky modal header */
-
 .modal-heading {
-  position: sticky;
-  top: 0;
-  z-index: 5;
+  position: relative;
+  z-index: 1;
 
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   justify-content: space-between;
   gap: 15px;
 
   flex-shrink: 0;
-
   padding: 25px 30px 20px;
-
   margin: 0;
 
-  background: rgba(255, 255, 255, 0.97);
-
+  background: #fff;
   border-bottom: 1px solid #f0edf6;
 }
 
-/* Modal title */
-
 .modal-heading h2 {
   margin: 0;
-
   color: #29253f;
-
   font-size: 25px;
   line-height: 1.3;
   letter-spacing: -0.8px;
 }
 
-/* Close button */
-
 .modal-heading .icon-button {
   flex-shrink: 0;
-
   width: 40px;
   height: 40px;
 
   color: #625b78;
-
   background: #f5f2fb;
-
   border: 1px solid #ebe5f5;
   border-radius: 12px;
 
   font-size: 25px;
   line-height: 1;
-
-  cursor: pointer;
-
-  transition:
-    background 0.2s ease,
-    color 0.2s ease,
-    transform 0.2s ease;
 }
-
-.modal-heading .icon-button:hover {
-  color: #6d4ce8;
-
-  background: #eee8ff;
-
-  transform: rotate(90deg);
-}
-
-/* Scroll only the modal content */
 
 .note-modal form {
-  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  align-content: start;
+  gap: 20px;
 
+  min-height: 0;
+  padding: 24px 30px 30px;
+  margin: 0;
+
+  overflow-x: hidden;
   overflow-y: auto;
   overscroll-behavior: contain;
-
-  padding: 24px 30px 30px;
-
-  display: grid;
-  gap: 20px;
 }
 
-/* Responsive modal */
+.note-modal form > label {
+  min-width: 0;
+}
+
+.note-modal input,
+.note-modal textarea,
+.note-modal select {
+  max-width: 100%;
+  box-sizing: border-box;
+}
+
+.note-modal input[type="file"] {
+  width: 100%;
+  min-width: 0;
+}
 
 @media (max-width: 650px) {
   .modal-backdrop {
@@ -1884,8 +1884,8 @@
 
   .note-modal {
     width: 100%;
+    max-height: calc(100vh - 20px);
     max-height: calc(100dvh - 20px);
-
     border-radius: 18px;
   }
 
@@ -1893,11 +1893,94 @@
     padding: 20px 20px 16px;
   }
 
-  .note-modal form {
-    padding: 20px;
-  }
-
   .modal-heading h2 {
     font-size: 22px;
   }
+
+  .note-modal form {
+    padding: 20px;
+  }
+}
+
+
+
+
+.note-modal {
+  margin-top: 16px;
+  margin-bottom: 16px;
+  max-height: calc(100vh - 80px);
+  max-height: calc(100dvh - 80px);
+}
+
+@media (max-width: 650px) {
+  .modal-backdrop {
+    padding: 12px;
+  }
+
+  .note-modal {
+    margin-top: 12px;
+    margin-bottom: 12px;
+    max-height: calc(100vh - 48px);
+    max-height: calc(100dvh - 48px);
+  }
+}
+
+
+/* Sidebar user profile */
+
+.mantine-AppShell-navbar {
+  display: flex;
+  flex-direction: column;
+}
+
+.sidebar-user-profile {
+  margin-top: auto;
+  padding: 16px 8px 4px;
+  border-radius: 12px;
+  min-width: 0;
+}
+
+.sidebar-user-details {
+  flex: 1;
+  min-width: 0;
+}
+
+.sidebar-user-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sidebar-user-profile .mantine-Avatar-root {
+  flex-shrink: 0;
+}
+
+
+/* Sidebar user profile */
+
+.mantine-AppShell-navbar {
+  display: flex;
+  flex-direction: column;
+}
+
+.sidebar-user-profile {
+  margin-top: auto;
+  padding: 16px 8px 4px;
+  border-radius: 12px;
+  min-width: 0;
+}
+
+.sidebar-user-details {
+  flex: 1;
+  min-width: 0;
+}
+
+.sidebar-user-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sidebar-user-profile .mantine-Avatar-root {
+  flex-shrink: 0;
 }

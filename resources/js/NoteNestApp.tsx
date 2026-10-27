@@ -1,7 +1,9 @@
 import { useEffect, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { useEditor, EditorContent } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
 import CharacterCount from '@tiptap/extension-character-count';
+import Underline from '@tiptap/extension-underline';
 import DOMPurify from 'dompurify';
 import './App.css';
 import {
@@ -9,10 +11,13 @@ import {
     Burger,
     NavLink,
     Group,
-    Text,
     Title,
     ActionIcon,
     Tooltip,
+    Avatar,
+    Box,
+    Divider,
+    Text,
 } from '@mantine/core';
 
 import { useDisclosure } from '@mantine/hooks';
@@ -93,7 +98,6 @@ function App() {
   const [showForm, setShowForm] = useState(false);
   const [editingNote, setEditingNote] = useState<Note | null>(null);
   const [title, setTitle] = useState('');
-  const [content, setContent] = useState('');
   const [noteCategory, setNoteCategory] = useState('personal');
   const [noteColor, setNoteColor] = useState('#FFFFFF');
   const [saving, setSaving] = useState(false);
@@ -105,9 +109,11 @@ function App() {
   const [uploadProgress, setUploadProgress] = useState(0);
   const [sidebarOpened, { toggle: toggleSidebar }] = useDisclosure();
   const [pinnedOnly, setPinnedOnly] = useState(false);
+  const [content, setContent] = useState('');
   const editor = useEditor({
     extensions: [
       StarterKit,
+      Underline,
       CharacterCount.configure({
         limit: 5000,
       }),
@@ -209,7 +215,7 @@ function handleFileSelection(
 
   if (files.length > remainingSlots) {
     setAttachmentError(
-      `You can attach a maximum of 5 files to a note. You can select ${Math.max(remainingSlots, 0)} more file(s).`,
+      `You can attach a maximum of 5 files. You can select ${Math.max(remainingSlots, 0)} more file(s).`,
     );
 
     event.target.value = '';
@@ -242,106 +248,98 @@ function handleFileSelection(
 }
 
 
+function uploadAttachment(file: File) {
+  if (!editingNote) return;
 
+  setAttachmentError('');
 
+  if (file.size > MAX_ATTACHMENT_SIZE) {
+    setAttachmentError(
+      'File is too large. Maximum allowed size is 50 MB.',
+    );
+    return;
+  }
 
-  function uploadAttachment(file: File) {
-    
-    if (!editingNote) return;
+  if (!ALLOWED_ATTACHMENT_TYPES.includes(file.type)) {
+    setAttachmentError(
+      'Unsupported file type. Please upload PDF, DOC, DOCX, TXT, JPG, PNG, or WEBP.',
+    );
+    return;
+  }
 
-    setAttachmentError('');
+  if (attachments.length + selectedFiles.length >= 5) {
+    setAttachmentError(
+      'You can attach a maximum of 5 files to a note.',
+    );
+    return;
+  }
 
-    if (file.size > MAX_ATTACHMENT_SIZE) {
-      setAttachmentError(
-        'File is too large. Maximum allowed size is 50 MB.',
+  setAttachmentUploading(true);
+  setUploadProgress(0);
+
+  const formData = new FormData();
+  formData.append('file', file);
+
+  const xhr = new XMLHttpRequest();
+
+  xhr.open(
+    'POST',
+    `${API_URL}/${editingNote.id}/attachments`,
+  );
+
+  xhr.setRequestHeader('Accept', 'application/json');
+
+  xhr.upload.onprogress = (event) => {
+    if (event.lengthComputable) {
+      setUploadProgress(
+        Math.round((event.loaded / event.total) * 100),
       );
-      return;
     }
+  };
 
-    if (!ALLOWED_ATTACHMENT_TYPES.includes(file.type)) {
+  xhr.onload = async () => {
+    try {
+      const result = JSON.parse(xhr.responseText);
+
+      if (xhr.status < 200 || xhr.status >= 300) {
+        const validationMessage = result.errors
+          ? Object.values(result.errors).flat().join(' ')
+          : result.message;
+
+        throw new Error(
+          validationMessage || 'Unable to upload attachment.',
+        );
+      }
+
+      setUploadProgress(100);
+
+      await loadAttachments(editingNote.id);
+    } catch (err) {
       setAttachmentError(
-        'Unsupported file type. Please upload PDF, DOC, DOCX, TXT, JPG, PNG, or WEBP.',
+        err instanceof Error
+          ? err.message
+          : 'Unable to upload attachment.',
       );
-      return;
+    } finally {
+      setAttachmentUploading(false);
     }
+  };
 
-    if (attachments.length >= 5) {
-      setAttachmentError(
-        'You can attach a maximum of 5 files to a note.',
-      );
-      return;
-    }
-
-    setAttachmentUploading(true);
-
-    setUploadProgress(0);
-    setAttachmentError('');
-
-    const formData = new FormData();
-    formData.append('file', file);
-
-    const xhr = new XMLHttpRequest();
-
-    xhr.open(
-      'POST',
-      `${API_URL}/${editingNote.id}/attachments`,
+  xhr.onerror = () => {
+    setAttachmentError(
+      'Network error. Unable to upload attachment.',
     );
 
-    xhr.setRequestHeader('Accept', 'application/json');
+    setAttachmentUploading(false);
+  };
 
-    xhr.upload.onprogress = (event) => {
-      if (event.lengthComputable) {
-        const percentage = Math.round(
-          (event.loaded / event.total) * 100,
-        );
+  xhr.onabort = () => {
+    setAttachmentError('Attachment upload was cancelled.');
+    setAttachmentUploading(false);
+  };
 
-        setUploadProgress(percentage);
-      }
-    };
-
-    xhr.onload = async () => {
-      try {
-        const result = JSON.parse(xhr.responseText);
-
-        if (xhr.status < 200 || xhr.status >= 300) {
-          const validationMessage = result.errors
-            ? Object.values(result.errors).flat().join(' ')
-            : result.message;
-
-          throw new Error(
-            validationMessage || 'Unable to upload attachment.',
-          );
-        }
-
-        setUploadProgress(100);
-
-        await loadAttachments(editingNote.id);
-      } catch (err) {
-        setAttachmentError(
-          err instanceof Error
-            ? err.message
-            : 'Unable to upload attachment.',
-        );
-      } finally {
-        setAttachmentUploading(false);
-      }
-    };
-
-    xhr.onerror = () => {
-      setAttachmentError(
-        'Network error. Unable to upload attachment.',
-      );
-
-      setAttachmentUploading(false);
-    };
-
-    xhr.onabort = () => {
-      setAttachmentError('Attachment upload was cancelled.');
-      setAttachmentUploading(false);
-    };
-
-    xhr.send(formData);
-  }
+  xhr.send(formData);
+}
 
 
 async function uploadSelectedFiles(
@@ -377,6 +375,7 @@ async function uploadSelectedFiles(
     }
   }
 }
+
 
 
 
@@ -463,14 +462,17 @@ async function uploadSelectedFiles(
   }, []);
 
 
-  function openCreateForm() {
+function openCreateForm() {
   setEditingNote(null);
   setAttachments([]);
   setSelectedFiles([]);
   setAttachmentError('');
   setTitle('');
   setContent('');
+
   editor?.commands.clearContent();
+  editor?.commands.unsetAllMarks();
+
   setNoteCategory('personal');
   setNoteColor('#FFFFFF');
   setShowForm(true);
@@ -478,6 +480,7 @@ async function uploadSelectedFiles(
 
   function openEditForm(note: Note) {
     setEditingNote(note);
+    setSelectedFiles([]);
     setAttachments([]);
     setAttachmentError('');
     void loadAttachments(note.id);
@@ -568,7 +571,10 @@ async function uploadSelectedFiles(
     }
   }
 
+  
   async function togglePin(note: Note) {
+    const newPinnedState = !note.is_pinned;
+
     try {
       const response = await fetch(`${API_URL}/${note.id}/pin`, {
         method: 'PATCH',
@@ -576,16 +582,49 @@ async function uploadSelectedFiles(
           'Content-Type': 'application/json',
           Accept: 'application/json',
         },
-        body: JSON.stringify({ is_pinned: !note.is_pinned }),
+        body: JSON.stringify({ is_pinned: newPinnedState }),
       });
 
-      if (!response.ok) throw new Error('Unable to update pin status.');
+      if (!response.ok) {
+        throw new Error('Unable to update pin status.');
+      }
 
-      await loadNotes(page, search, category);
+      // Update the existing notes in React without reloading the list.
+      setNotes((currentNotes) => {
+        const updatedNotes = currentNotes.map((currentNote) =>
+          currentNote.id === note.id
+            ? { ...currentNote, is_pinned: newPinnedState }
+            : currentNote
+        );
+
+        // Remove an unpinned note from the Pinned notes view.
+        const visibleNotes = pinnedOnly
+          ? updatedNotes.filter((currentNote) => currentNote.is_pinned)
+          : updatedNotes;
+
+        // Keep pinned notes first, followed by recently updated notes.
+        return visibleNotes.sort((a, b) => {
+          if (a.is_pinned !== b.is_pinned) {
+            return Number(b.is_pinned) - Number(a.is_pinned);
+          }
+
+          return (
+            new Date(b.updated_at).getTime() -
+            new Date(a.updated_at).getTime()
+          );
+        });
+      });
+
+      if (pinnedOnly && !newPinnedState) {
+        setTotal((currentTotal) => Math.max(0, currentTotal - 1));
+      }
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Pin update failed.');
+      setError(
+        err instanceof Error ? err.message : 'Pin update failed.'
+      );
     }
   }
+
 
   function changeSearch(value: string) {
     setSearch(value);
@@ -595,8 +634,9 @@ async function uploadSelectedFiles(
 
   function changeCategory(value: string) {
     setCategory(value);
+    setPinnedOnly(false);
     setPage(1);
-    void loadNotes(1, search, value);
+    void loadNotes(1, search, value, false);
   }
 
   return (
@@ -607,7 +647,7 @@ async function uploadSelectedFiles(
             breakpoint: 'sm',
             collapsed: {
                 mobile: !sidebarOpened,
-                desktop: false,
+                desktop: !sidebarOpened,
             },
         }}
         padding="md"
@@ -618,7 +658,6 @@ async function uploadSelectedFiles(
               <Burger
                   opened={sidebarOpened}
                   onClick={toggleSidebar}
-                  hiddenFrom="sm"
                   size="sm"
                   aria-label="Toggle navigation"
               />
@@ -645,112 +684,141 @@ async function uploadSelectedFiles(
           </Tooltip>
       </Group>
   </AppShell.Header>
-  <AppShell.Navbar p="md">
-    <Text fw={700} size="sm" mb="md">
-        WORKSPACE
-    </Text>
-
+  
+<AppShell.Navbar p="md">
+  <NavLink
+    label="Categorize"
+    leftSection={<span>🗂️</span>}
+    defaultOpened
+    childrenOffset={28}
+  >
     <NavLink
-        label="All notes"
-        active
-        leftSection={<span>📝</span>}
-        onClick={() => {
-          setPinnedOnly(false);
-          changeCategory('');
-        }}
+      label="All notes"
+      active={!category && !pinnedOnly}
+      leftSection={<span>📝</span>}
+      onClick={() => {
+        setPinnedOnly(false);
+        changeCategory('');
+      }}
     />
 
     <NavLink
-        label="Pinned notes"
-        active={pinnedOnly}
-        leftSection={<span>📌</span>}
-        onClick={() => {
-            setPinnedOnly(true);
-            setCategory('');
-            setPage(1);
-            void loadNotes(1, search, '', true);
-            }}
+      label="Pinned notes"
+      active={pinnedOnly}
+      leftSection={<span>📌</span>}
+      onClick={() => {
+        setPinnedOnly(true);
+        setCategory('');
+        setPage(1);
+        void loadNotes(1, search, '', true);
+      }}
     />
 
     <NavLink
-        label="Personal"
-        leftSection={<span>👤</span>}
-        onClick={() => changeCategory('personal')}
+      label="Personal"
+      active={category === 'personal' && !pinnedOnly}
+      leftSection={<span>👤</span>}
+      onClick={() => changeCategory('personal')}
     />
 
     <NavLink
-        label="Work"
-        leftSection={<span>💼</span>}
-        onClick={() => changeCategory('work')}
+      label="Work"
+      active={category === 'work' && !pinnedOnly}
+      leftSection={<span>💼</span>}
+      onClick={() => changeCategory('work')}
     />
 
     <NavLink
-        label="Learning"
-        leftSection={<span>📚</span>}
-        onClick={() => changeCategory('learning')}
+      label="Learning"
+      active={category === 'learning' && !pinnedOnly}
+      leftSection={<span>📚</span>}
+      onClick={() => changeCategory('learning')}
     />
+  </NavLink>
+
+  <Divider my="md" />
+
+  <Group gap="sm" wrap="nowrap" className="sidebar-user-profile">
+      <Avatar
+          size={42}
+          radius="xl"
+          color="indigo"
+          variant="light"
+      >
+          NU
+      </Avatar>
+
+      <Box className="sidebar-user-details">
+          <Text size="sm" fw={600} className="sidebar-user-name">
+              NoteNest User
+          </Text>
+
+          <Text size="xs" c="dimmed">
+              Personal Workspace
+          </Text>
+      </Box>
+  </Group>
+
 </AppShell.Navbar>
+
 
 <AppShell.Main>
 
       
-    <section className="hero">
-      <div className="hero-content">
-        <div className="hero-badge">
-          <span className="hero-badge-dot"></span>
-          YOUR NEST OF THOUGHTS
-        </div>
+    {!category && !pinnedOnly && !search.trim() && (
+      <section className="hero">
+        <div className="hero-content">
+          <h1>
+            Your thoughts,
+            <br />
+            <span>beautifully organized.</span>
+          </h1>
 
-        <h1>
-          Your thoughts,
-          <br />
-          <span>beautifully organized.</span>
-        </h1>
+          <p className="hero-description">
+            Capture stray thoughts, fleeting genius, and things you swore you
+            wouldn't forget before lunch. Your brain is for having ideas, not
+            holding them.
+          </p>
 
-        <p className="hero-description">
-          Capture stray thoughts, fleeting genius, and things you swore you 
-          wouldn't forget before lunch. Your brain is for having ideas, not 
-          holding them.
-        </p>
+          <div className="hero-actions">
+            <button
+              className="hero-create-button"
+              onClick={openCreateForm}
+            >
+              <span>＋</span>
+              Capture a thought
+            </button>
 
-        <div className="hero-actions">
-          <button
-            className="hero-create-button"
-            onClick={openCreateForm}
-          >
-            <span>＋</span>
-            Capture a thought
-          </button>
-
-          <span className="hero-supporting-text">
-            Your thoughts are powerful
-          </span>
-        </div>
-      </div>
-
-      <div className="hero-decoration" aria-hidden="true">
-        <div className="hero-glow"></div>
-
-        <div className="hero-floating-card hero-card-one">
-          <span className="hero-card-icon">✦</span>
-          <div>
-            <strong>New ideas</strong>
-            <small>Capture your inspiration</small>
+            <span className="hero-supporting-text">
+              Your thoughts are powerful
+            </span>
           </div>
         </div>
 
-        <div className="hero-floating-card hero-card-two">
-          <span className="hero-card-icon">✓</span>
-          <div>
-            <strong>Stay organized</strong>
-            <small>Everything in its place</small>
-          </div>
-        </div>
+        <div className="hero-decoration" aria-hidden="true">
+          <div className="hero-glow"></div>
 
-        <div className="hero-orbit"></div>
-        <div className="hero-orbit-dot"></div>
-      </div>
-    </section>
+          <div className="hero-floating-card hero-card-one">
+            <span className="hero-card-icon">✦</span>
+            <div>
+              <strong>New ideas</strong>
+              <small>Capture your inspiration</small>
+            </div>
+          </div>
+
+          <div className="hero-floating-card hero-card-two">
+            <span className="hero-card-icon">✓</span>
+            <div>
+              <strong>Stay organized</strong>
+              <small>Everything in its place</small>
+            </div>
+          </div>
+
+          <div className="hero-orbit"></div>
+          <div className="hero-orbit-dot"></div>
+        </div>
+      </section>
+    )}
 
 
       <section className="notes-section">
@@ -824,6 +892,7 @@ async function uploadSelectedFiles(
                       {note.category ?? 'Uncategorized'}
                     </span>
                     <button
+                      type="button"
                       className={`icon-button ${note.is_pinned ? 'pinned' : ''}`}
                       onClick={() => void togglePin(note)}
                       aria-label={note.is_pinned ? 'Unpin note' : 'Pin note'}
@@ -885,7 +954,9 @@ async function uploadSelectedFiles(
         <span>A calmer place for your thoughts.</span>
       </footer>
 
-      {showForm && (
+      {showForm &&
+        createPortal(
+          (
         <div
           className="modal-backdrop"
           onMouseDown={(event) => {
@@ -919,8 +990,8 @@ async function uploadSelectedFiles(
               >
                 ×
               </button>
-            </div>
-            <form onSubmit={(event) => void saveNote(event)}>
+             </div>
+             <form onSubmit={(event) => void saveNote(event)}>
               <label>
                 Note title
                 <input
@@ -933,12 +1004,18 @@ async function uploadSelectedFiles(
                 />
               </label>
 
-              <label className="editor-label">
-              Content              
+              <div className="editor-field">
+              <div className="editor-field-label">Content</div>             
               <div className="tiptap-toolbar">
                 <button
                   type="button"
-                  onClick={() => editor?.chain().focus().toggleBold().run()}
+                  className={editor?.isActive('bold') ? 'is-active' : ''}
+                  onMouseDown={(event) => {
+                    event.preventDefault();
+                  }}
+                  onClick={() => {
+                    editor?.chain().focus().toggleBold().run();
+                  }}
                   disabled={!editor}
                   aria-label="Bold"
                   title="Bold"
@@ -948,7 +1025,12 @@ async function uploadSelectedFiles(
 
                 <button
                   type="button"
-                  onClick={() => editor?.chain().focus().toggleItalic().run()}
+                  onMouseDown={(event) => {
+                    event.preventDefault();
+                  }}
+                  onClick={() => {
+                    editor?.chain().focus().toggleItalic().run();
+                  }}
                   disabled={!editor}
                   aria-label="Italic"
                   title="Italic"
@@ -958,7 +1040,12 @@ async function uploadSelectedFiles(
 
                 <button
                   type="button"
-                  onClick={() => editor?.chain().focus().toggleUnderline().run()}
+                  onMouseDown={(event) => {
+                    event.preventDefault();
+                  }}
+                  onClick={() => {
+                    editor?.chain().focus().toggleUnderline().run();
+                  }}
                   disabled={!editor}
                   aria-label="Underline"
                   title="Underline"
@@ -968,7 +1055,12 @@ async function uploadSelectedFiles(
 
                 <button
                   type="button"
-                  onClick={() => editor?.chain().focus().toggleHeading({ level: 2 }).run()}
+                  onMouseDown={(event) => {
+                    event.preventDefault();
+                  }}
+                  onClick={() => {
+                    editor?.chain().focus().toggleHeading({level: 2}).run();
+                  }}
                   disabled={!editor}
                   aria-label="Heading"
                   title="Heading"
@@ -978,7 +1070,12 @@ async function uploadSelectedFiles(
 
                 <button
                   type="button"
-                  onClick={() => editor?.chain().focus().toggleBulletList().run()}
+                  onMouseDown={(event) => {
+                    event.preventDefault();
+                  }}
+                  onClick={() => {
+                    editor?.chain().focus().toggleBulletList().run();
+                  }}
                   disabled={!editor}
                   aria-label="Bullet list"
                   title="Bullet list"
@@ -988,7 +1085,12 @@ async function uploadSelectedFiles(
 
                 <button
                   type="button"
-                  onClick={() => editor?.chain().focus().toggleOrderedList().run()}
+                  onMouseDown={(event) => {
+                    event.preventDefault();
+                  }}
+                  onClick={() => {
+                    editor?.chain().focus().toggleOrderedList().run();
+                  }}
                   disabled={!editor}
                   aria-label="Numbered list"
                   title="Numbered list"
@@ -998,7 +1100,12 @@ async function uploadSelectedFiles(
 
                 <button
                   type="button"
-                  onClick={() => editor?.chain().focus().undo().run()}
+                  onMouseDown={(event) => {
+                    event.preventDefault();
+                  }}
+                  onClick={() => {
+                    editor?.chain().focus().undo().run();
+                  }}
                   disabled={!editor}
                   aria-label="Undo"
                   title="Undo"
@@ -1008,7 +1115,12 @@ async function uploadSelectedFiles(
 
                 <button
                   type="button"
-                  onClick={() => editor?.chain().focus().redo().run()}
+                  onMouseDown={(event) => {
+                    event.preventDefault();
+                  }}
+                  onClick={() => {
+                    editor?.chain().focus().redo().run();
+                  }}
                   disabled={!editor}
                   aria-label="Redo"
                   title="Redo"
@@ -1024,7 +1136,7 @@ async function uploadSelectedFiles(
               <span className="character-count">
                 {editor?.storage.characterCount.characters() ?? 0}/5000 characters
               </span>
-            </label>
+             </div>
 
               <label>
                 Category
@@ -1065,161 +1177,167 @@ async function uploadSelectedFiles(
                 onChange={(e) => setNoteColor(e.target.value)}
               />
             </div>
-
             <div className="attachment-section">
-              <h3>Attachments</h3>
+  <h3>Attachments</h3>
 
-              <input
-                type="file"
-                multiple
-                accept=".pdf,.doc,.docx,.txt,.jpg,.jpeg,.png,.webp"
-                onChange={handleFileSelection}
-                disabled={saving || attachmentUploading}
-              />
+  {!editingNote && (
+    <>
+      <label htmlFor="note-attachment-new">
+        Choose files
+      </label>
 
-              {selectedFiles.length > 0 && (
-                <ul className="attachment-list">
-                  {selectedFiles.map((file, index) => (
-                    <li
-                      key={`${file.name}-${file.size}-${index}`}
-                      className="attachment-item"
-                    >
-                      <div className="attachment-info">
-                        <strong>{file.name}</strong>
+      <input
+        id="note-attachment-new"
+        type="file"
+        multiple
+        accept=".pdf,.doc,.docx,.txt,.jpg,.jpeg,.png,.webp"
+        onChange={handleFileSelection}
+        disabled={saving}
+      />
 
-                        <span className="attachment-meta">
-                          {(file.size / 1024).toFixed(1)} KB
-                        </span>
-                      </div>
-
-                      <button
-                        type="button"
-                        className="attachment-delete"
-                        onClick={() => {
-                          setSelectedFiles((previous) =>
-                            previous.filter((_, fileIndex) => fileIndex !== index),
-                          );
-                        }}
-                        disabled={saving}
-                      >
-                        Remove
-                      </button>
-                    </li>
-                  ))}
-                </ul>
-              )}
-
-              {attachmentError && (
-                <p role="alert" className="attachment-error">
-                  {attachmentError}
-                </p>
-              )}
-            </div>
-
-            {editingNote && (
-              <div className="attachment-section">
-                <h3>Attachments</h3>                
-                {attachmentUploading && (
-                  <div className="attachment-progress" role="status">
-                    <div className="attachment-progress-label">
-                      <span>Uploading attachment...</span>
-                      <span>{uploadProgress}%</span>
-                    </div>
-
-                    <div className="attachment-progress-track">
-                      <div
-                        className="attachment-progress-fill"
-                        style={{ width: `${uploadProgress}%` }}
-                      />
-                    </div>
-                  </div>
+      {selectedFiles.length > 0 && (
+        <ul className="attachment-list">
+          {selectedFiles.map((file, index) => (
+            <li
+              key={`${file.name}-${file.size}-${index}`}
+              className="attachment-item"
+            >
+              <div className="attachment-info">
+                {file.type.startsWith('image/') && (
+                  <img
+                    className="attachment-preview"
+                    src={URL.createObjectURL(file)}
+                    alt={file.name}
+                  />
                 )}
 
-                {attachmentLoading ? (
-                  <p>Loading attachments...</p>
-                ) : attachments.length === 0 ? (
-                  <p>No attachments yet.</p>
-                ) : (
-                  <ul className="attachment-list">
-                    {attachments.map((attachment) => (
-                      
-                    <li key={attachment.id} className="attachment-item">
-                      <div className="attachment-info">
-                        {attachment.mime_type.startsWith('image/') && (
-                          <img
-                            className="attachment-preview"
-                            src={`/storage/${attachment.file_path}`}
-                            alt={attachment.original_name}
-                            loading="lazy"
-                          />
-                        )}
+                <strong>{file.name}</strong>
 
-                        <strong>{attachment.original_name}</strong>
-
-                        <span className="attachment-meta">
-                          {attachment.mime_type} ·{' '}
-                          {(attachment.file_size / 1024).toFixed(1)} KB
-                        </span>
-                      </div>
-
-                      <div className="attachment-actions">
-                        <a
-                          className="attachment-download"
-                          href={`${API_URL}/${editingNote.id}/attachments/${attachment.id}/download`}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                        >
-                          Download
-                        </a>
-
-                        <button
-                          type="button"
-                          className="attachment-delete"
-                          onClick={() => void deleteAttachment(attachment.id)}
-                          disabled={attachmentUploading}
-                        >
-                          Delete
-                        </button>
-                      </div>
-                    </li>
-
-                    ))}
-                  </ul>
-                )}
-
-                {attachmentError && (
-                  <div className="error-message" role="alert">
-                    {attachmentError}
-                  </div>
-                )}
-
-                <label htmlFor="note-attachment">
-                  Choose a file
-                </label>
-
-                {attachmentUploading && (
-                  <p className="attachment-status" role="status">
-                    Uploading attachment...
-                  </p>
-                )}
-              <input
-                id="note-attachment"
-                type="file"
-                accept=".pdf,.doc,.docx,.txt,.jpg,.jpeg,.png,.webp"
-                disabled={attachmentUploading || saving}
-                onChange={(event) => {
-                  const file = event.target.files?.[0];
-
-                  if (file) {
-                    void uploadAttachment(file);
-                  }
-
-                  event.target.value = '';
-                }}
-              />
-
+                <span className="attachment-meta">
+                  {(file.size / 1024).toFixed(1)} KB
+                </span>
               </div>
-            )}
+
+              <button
+                type="button"
+                className="attachment-delete"
+                onClick={() => {
+                  setSelectedFiles((previous) =>
+                    previous.filter(
+                      (_, fileIndex) => fileIndex !== index,
+                    ),
+                  );
+                }}
+                disabled={saving}
+              >
+                Remove
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </>
+  )}
+
+  {editingNote && (
+    <>
+      {attachmentUploading && (
+        <div className="attachment-progress" role="status">
+          <div className="attachment-progress-label">
+            <span>Uploading attachment...</span>
+            <span>{uploadProgress}%</span>
+          </div>
+
+          <div className="attachment-progress-track">
+            <div
+              className="attachment-progress-fill"
+              style={{ width: `${uploadProgress}%` }}
+            />
+          </div>
+        </div>
+      )}
+
+      {attachmentLoading ? (
+        <p>Loading attachments...</p>
+      ) : attachments.length === 0 ? (
+        <p>No attachments yet.</p>
+      ) : (
+        <ul className="attachment-list">
+          {attachments.map((attachment) => (
+            <li
+              key={attachment.id}
+              className="attachment-item"
+            >
+              <div className="attachment-info">
+                {attachment.mime_type.startsWith('image/') && (
+                  <img
+                    className="attachment-preview"
+                    src={`${API_URL}/${editingNote.id}/attachments/${attachment.id}/preview`}
+                    alt={attachment.original_name}
+                    loading="lazy"
+                  />
+                )}
+
+                <strong>{attachment.original_name}</strong>
+
+                <span className="attachment-meta">
+                  {attachment.mime_type} ·{' '}
+                  {(attachment.file_size / 1024).toFixed(1)} KB
+                </span>
+              </div>
+
+              <div className="attachment-actions">
+                <a
+                  className="attachment-download"
+                  href={`${API_URL}/${editingNote.id}/attachments/${attachment.id}/download`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  Download
+                </a>
+
+                <button
+                  type="button"
+                  className="attachment-delete"
+                  onClick={() => void deleteAttachment(attachment.id)}
+                  disabled={attachmentUploading}
+                >
+                  Delete
+                </button>
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
+
+      <label htmlFor="note-attachment">
+        Choose a file
+      </label>
+
+      <input
+        id="note-attachment"
+        type="file"
+        accept=".pdf,.doc,.docx,.txt,.jpg,.jpeg,.png,.webp"
+        disabled={attachmentUploading || saving}
+        onChange={(event) => {
+          const file = event.target.files?.[0];
+
+          if (file) {
+            void uploadAttachment(file);
+          }
+
+          event.target.value = '';
+        }}
+      />
+    </>
+  )}
+
+  {attachmentError && (
+    <p className="attachment-error" role="alert">
+      {attachmentError}
+    </p>
+  )}
+</div>
 
               {error && <div className="error-message">{error}</div>}
 
@@ -1238,6 +1356,8 @@ async function uploadSelectedFiles(
             </form>
           </section>
         </div>
+          ),
+          document.body,
       )}
         </AppShell.Main>
 </AppShell>

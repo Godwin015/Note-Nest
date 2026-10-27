@@ -30,3 +30,6 @@ Route::get(
     [NoteAttachmentController::class, 'download']
 );
 
+
+Route::get('/notes/{note}/attachments/{attachment}/preview', [NoteAttachmentController::class, 'preview']);
+

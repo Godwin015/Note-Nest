@@ -101,6 +101,41 @@ class NoteAttachmentController extends Controller
     }
 
 
+    public function preview(Note $note, NoteAttachment $attachment)
+    {
+        // Ensure the attachment belongs to the requested note
+        if ((int) $attachment->note_id !== (int) $note->id) {
+            return response()->json([
+                'message' => 'Attachment not found for this note.',
+            ], 404);
+        }
+
+        // Only allow image previews
+        if (!str_starts_with($attachment->mime_type, 'image/')) {
+            return response()->json([
+                'message' => 'Only image attachments can be previewed.',
+            ], 422);
+        }
+
+        // Ensure the image exists in storage
+        if (!Storage::disk('public')->exists($attachment->file_path)) {
+            return response()->json([
+                'message' => 'Attachment file not found.',
+            ], 404);
+        }
+
+        // Return the image directly to the browser
+        return response()->file(
+            Storage::disk('public')->path($attachment->file_path),
+            [
+                'Content-Type' => $attachment->mime_type,
+                'Content-Disposition' => 'inline',
+            ]
+        );
+    }
+
+
+
     /**
      * Download an attachment belonging to a note.
      */
