@@ -18,7 +18,8 @@ class NoteController extends Controller
             'page' => ['sometimes', 'integer', 'min:1'],
         ]);
 
-        $query = Note::query();
+        // Retrieve only notes belonging to the authenticated user.
+        $query = $request->user()->notes();
 
         if (!empty($filters['search'])) {
             $search = $filters['search'];
@@ -87,7 +88,7 @@ class NoteController extends Controller
         ]);
 
         //$note = Note::create($validated);
-        $note = Note::create([
+        $note = $request->user()->notes()->create([
             ...$validated,
             'is_pinned' => false,
         ]);
@@ -98,13 +99,19 @@ class NoteController extends Controller
         ], 201);
     }
 
-    public function show(Note $note): JsonResponse
+    public function show(Request $request, Note $note): JsonResponse
     {
-        return response()->json(['data' => $note]);
+        $note = $this->ownedNote($request, $note);
+
+        return response()->json([
+            'data' => $note,
+        ]);
     }
 
     public function update(Request $request, Note $note): JsonResponse
     {
+        $note = $this->ownedNote($request, $note);
+
         $validated = $request->validate([
             'title' => ['sometimes', 'required', 'string', 'min:3', 'max:120'],
 
@@ -152,8 +159,10 @@ class NoteController extends Controller
         ]);
     }
 
-    public function destroy(Note $note)
+    public function destroy(Request $request, Note $note)
     {
+        $note = $this->ownedNote($request, $note);
+
         $note->delete();
 
         return response()->noContent();
@@ -161,6 +170,8 @@ class NoteController extends Controller
 
     public function pin(Request $request, Note $note): JsonResponse
     {
+        $note = $this->ownedNote($request, $note);
+
         $validated = $request->validate([
             'is_pinned' => ['required', 'boolean'],
         ]);
@@ -174,4 +185,11 @@ class NoteController extends Controller
             'data' => $note->fresh(),
         ]);
     }
+    private function ownedNote(Request $request, Note $note): Note
+    {
+        return $request->user()
+            ->notes()
+            ->findOrFail($note->id);
+    }
+
 }

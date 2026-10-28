@@ -1,35 +1,52 @@
 <?php
 
+use App\Http\Controllers\Api\AuthController;
 use App\Http\Controllers\Api\NoteController;
 use App\Http\Controllers\Api\NoteAttachmentController;
 use Illuminate\Support\Facades\Route;
 
-Route::get('/notes', [NoteController::class, 'index']);
-Route::post('/notes', [NoteController::class, 'store']);
-Route::get('/notes/{note}', [NoteController::class, 'show']);
-Route::patch('/notes/{note}', [NoteController::class, 'update']);
-Route::delete('/notes/{note}', [NoteController::class, 'destroy']);
-Route::patch('/notes/{note}/pin', [NoteController::class, 'pin']);
-Route::post(
-    '/notes/{note}/attachments',
-    [NoteAttachmentController::class, 'store']
-);
-Route::get(
-    '/notes/{note}/attachments',
-    [NoteAttachmentController::class, 'index']
-);
+// Public authentication routes
+Route::post('/register', [AuthController::class, 'register']);
+Route::post('/login', [AuthController::class, 'login']);
 
-Route::delete(
-    '/notes/{note}/attachments/{attachment}',
-    [NoteAttachmentController::class, 'destroy']
-);
+// Protected routes
+Route::middleware('auth:sanctum')->group(function () {
 
+    // Authentication
+    Route::post('/logout', [AuthController::class, 'logout']);
+    Route::get('/user', [AuthController::class, 'user']);
 
-Route::get(
-    '/notes/{note}/attachments/{attachment}/download',
-    [NoteAttachmentController::class, 'download']
-);
+    // Notes
+    Route::get('/notes', [NoteController::class, 'index']);
+    Route::post('/notes', [NoteController::class, 'store']);
+    Route::get('/notes/{note}', [NoteController::class, 'show']);
+    Route::patch('/notes/{note}', [NoteController::class, 'update']);
+    Route::delete('/notes/{note}', [NoteController::class, 'destroy']);
+    Route::patch('/notes/{note}/pin', [NoteController::class, 'pin']);
 
+    // Attachments
+    Route::post(
+        '/notes/{note}/attachments',
+        [NoteAttachmentController::class, 'store']
+    );
 
-Route::get('/notes/{note}/attachments/{attachment}/preview', [NoteAttachmentController::class, 'preview']);
+    Route::get(
+        '/notes/{note}/attachments',
+        [NoteAttachmentController::class, 'index']
+    );
 
+    Route::delete(
+        '/notes/{note}/attachments/{attachment}',
+        [NoteAttachmentController::class, 'destroy']
+    );
+
+    Route::get(
+        '/notes/{note}/attachments/{attachment}/download',
+        [NoteAttachmentController::class, 'download']
+    );
+
+    Route::get(
+        '/notes/{note}/attachments/{attachment}/preview',
+        [NoteAttachmentController::class, 'preview']
+    );
+});

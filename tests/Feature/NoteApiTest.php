@@ -3,12 +3,24 @@
 namespace Tests\Feature;
 
 use App\Models\Note;
+use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Tests\TestCase;
 
 class NoteApiTest extends TestCase
 {
     use RefreshDatabase;
+
+    protected User $user;
+
+    protected function setUp(): void
+    {
+        parent::setUp();
+
+        $this->user = User::factory()->create();
+
+        $this->actingAs($this->user);
+    }
 
     public function test_it_creates_a_note_with_default_pin_state(): void
     {
@@ -24,6 +36,7 @@ class NoteApiTest extends TestCase
             ->assertJsonPath('data.is_pinned', false);
 
         $this->assertDatabaseHas('notes', [
+            'user_id' => $this->user->id,
             'title' => 'Team Meeting',
             'content' => 'Discuss the project progress.',
             'is_pinned' => 0,
@@ -47,7 +60,7 @@ class NoteApiTest extends TestCase
 
     public function test_it_updates_a_note(): void
     {
-        $note = Note::create([
+        $note = $this->user->notes()->create([
             'title' => 'Old title',
             'content' => 'Old content',
         ]);
@@ -61,13 +74,14 @@ class NoteApiTest extends TestCase
 
         $this->assertDatabaseHas('notes', [
             'id' => $note->id,
+            'user_id' => $this->user->id,
             'title' => 'Updated title',
         ]);
     }
 
     public function test_it_deletes_a_note(): void
     {
-        $note = Note::create([
+        $note = $this->user->notes()->create([
             'title' => 'Delete me',
             'content' => 'This note will be deleted.',
         ]);
@@ -82,19 +96,19 @@ class NoteApiTest extends TestCase
 
     public function test_search_and_category_filter_work_together(): void
     {
-        $matching = Note::create([
+        $matching = $this->user->notes()->create([
             'title' => 'Project planning',
             'content' => 'Prepare the agenda.',
             'category' => 'work',
         ]);
 
-        Note::create([
+        $this->user->notes()->create([
             'title' => 'Personal reminder',
             'content' => 'Remember the project deadline.',
             'category' => 'personal',
         ]);
 
-        Note::create([
+        $this->user->notes()->create([
             'title' => 'Shopping list',
             'content' => 'Buy groceries.',
             'category' => 'work',
@@ -108,12 +122,12 @@ class NoteApiTest extends TestCase
 
     public function test_pin_status_changes_and_pinned_notes_appear_first(): void
     {
-        $ordinary = Note::create([
+        $ordinary = $this->user->notes()->create([
             'title' => 'Ordinary note',
             'content' => 'Regular content.',
         ]);
 
-        $important = Note::create([
+        $important = $this->user->notes()->create([
             'title' => 'Important note',
             'content' => 'Important content.',
         ]);
@@ -136,16 +150,23 @@ class NoteApiTest extends TestCase
 
     public function test_missing_note_returns_404(): void
     {
-        $this->getJson('/api/notes/999999')->assertNotFound();
+        $this->getJson('/api/notes/999999')
+            ->assertNotFound();
+
         $this->patchJson('/api/notes/999999', [
             'title' => 'Updated title',
         ])->assertNotFound();
-        $this->deleteJson('/api/notes/999999')->assertNotFound();
+
+        $this->deleteJson('/api/notes/999999')
+            ->assertNotFound();
     }
 
     public function test_notes_are_paginated_ten_per_page(): void
     {
-        Note::factory()->count(11)->create();
+        Note::factory()
+            ->count(11)
+            ->for($this->user)
+            ->create();
 
         $this->getJson('/api/notes?page=1')
             ->assertOk()
@@ -156,5 +177,25 @@ class NoteApiTest extends TestCase
         $this->getJson('/api/notes?page=2')
             ->assertOk()
             ->assertJsonCount(1, 'data');
+    }
+
+    public function test_user_cannot_access_another_users_note(): void
+    {
+        $anotherUser = User::factory()->create();
+
+        $note = $anotherUser->notes()->create([
+            'title' => 'Private note',
+            'content' => 'This belongs to another user.',
+        ]);
+
+        $this->getJson("/api/notes/{$note->id}")
+            ->assertNotFound();
+
+        $this->patchJson("/api/notes/{$note->id}", [
+            'title' => 'Trying to update',
+        ])->assertNotFound();
+
+        $this->deleteJson("/api/notes/{$note->id}")
+            ->assertNotFound();
     }
 }

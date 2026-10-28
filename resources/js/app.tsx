@@ -3,7 +3,7 @@ import { createRoot } from 'react-dom/client';
 import '@mantine/core/styles.css';
 import './index.css';
 import { MantineProvider } from '@mantine/core';
-import NoteNestApp from './NoteNestApp';
+import AuthApp from './AuthApp';
 import { Notifications } from '@mantine/notifications';
 import '@mantine/notifications/styles.css';
 
@@ -23,7 +23,7 @@ if (rootElement) {
                 }}
             >
                 <Notifications />
-                <NoteNestApp />
+                <AuthApp />
             </MantineProvider>
         </StrictMode>,
     );

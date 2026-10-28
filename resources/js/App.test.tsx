@@ -8,6 +8,7 @@ import {
   vi,
 } from 'vitest';
 import {
+  act,
   cleanup,
   fireEvent,
   render,
@@ -16,6 +17,7 @@ import {
 } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import App from './NoteNestApp';
+import { resetCsrfForTests } from './api';
 
 const mockNotes = [
   {
@@ -28,6 +30,12 @@ const mockNotes = [
     updated_at: '2026-10-22T10:00:00.000000Z',
   },
 ];
+
+const mockUser = {
+  id: 1,
+  name: 'Test User',
+  email: 'test@example.com',
+};
 
 function paginatedResponse(
   notes = mockNotes,
@@ -43,12 +51,42 @@ function paginatedResponse(
   };
 }
 
-function mockFetch(response: unknown, ok = true) {
-  return vi.fn().mockResolvedValue({
-    ok,
-    status: ok ? 200 : 500,
+function mockResponse(
+  response: unknown,
+  status = 200,
+) {
+  return {
+    ok: status >= 200 && status < 300,
+    status,
     json: async () => response,
+  };
+}
+
+function mockUserResponse() {
+  return mockResponse({
+    user: mockUser,
   });
+}
+
+/**
+ * Creates a fetch mock that returns the supplied responses
+ * in sequence.
+ *
+ * If the app makes more requests than expected, it returns
+ * a default notes response instead of undefined.
+ */
+function mockFetchSequence(...responses: unknown[]) {
+  const fetchMock = vi.fn();
+
+  responses.forEach((response) => {
+    fetchMock.mockResolvedValueOnce(response);
+  });
+
+  fetchMock.mockResolvedValue(
+    mockResponse(paginatedResponse()),
+  );
+
+  return fetchMock;
 }
 
 function renderApp() {
@@ -72,22 +110,45 @@ async function typeIntoEditor(
 
   expect(editor).not.toBeNull();
 
-  editor!.innerHTML = `<p>${content}</p>`;
-
-  fireEvent.input(editor!);
+  await act(async () => {
+    editor!.innerHTML = `<p>${content}</p>`;
+    fireEvent.input(editor!);
+  });
 }
 
+/**
+ * Initial dashboard requests:
+ *
+ * 1. GET /api/user
+ * 2. GET /api/notes?page=1
+ */
+function mockInitialFetch(notes = mockNotes) {
+  return mockFetchSequence(
+    mockUserResponse(),
+    mockResponse(paginatedResponse(notes)),
+  );
+}
+
+beforeEach(() => {
+  resetCsrfForTests();
+
+  vi.stubGlobal(
+    'fetch',
+    mockInitialFetch(),
+  );
+});
+
+afterEach(() => {
+  cleanup();
+
+  vi.restoreAllMocks();
+
+  vi.unstubAllGlobals();
+
+  resetCsrfForTests();
+});
+
 describe('NoteNest dashboard', () => {
-  beforeEach(() => {
-    vi.stubGlobal('fetch', mockFetch(paginatedResponse()));
-  });
-
-  afterEach(() => {
-    cleanup();
-    vi.restoreAllMocks();
-    vi.unstubAllGlobals();
-  });
-
   it('loads and displays notes from the API', async () => {
     renderApp();
 
@@ -96,20 +157,24 @@ describe('NoteNest dashboard', () => {
     ).toBeInTheDocument();
 
     expect(
-      screen.getByText('Testing the application interface.'),
+      screen.getByText(
+        'Testing the application interface.',
+      ),
     ).toBeInTheDocument();
   });
 
   it('shows an empty state when there are no notes', async () => {
     vi.stubGlobal(
       'fetch',
-      mockFetch(paginatedResponse([], 1, 1, 0)),
+      mockInitialFetch([]),
     );
 
     renderApp();
 
     expect(
-      await screen.findByText('A little space for your ideas'),
+      await screen.findByText(
+        'A little space for your ideas',
+      ),
     ).toBeInTheDocument();
   });
 
@@ -118,70 +183,81 @@ describe('NoteNest dashboard', () => {
 
     renderApp();
 
-    await screen.findByText('My first NoteNest note');
-
-    await user.click(
-      screen.getByRole('button', { name: /new note/i }),
+    await screen.findByText(
+      'My first NoteNest note',
     );
 
-    expect(screen.getByRole('dialog')).toBeInTheDocument();
+    await user.click(
+      screen.getByRole('button', {
+        name: /new note/i,
+      }),
+    );
+
+    expect(
+      screen.getByRole('dialog'),
+    ).toBeInTheDocument();
 
     expect(
       screen.getByLabelText('Note title'),
     ).toBeInTheDocument();
 
     expect(
-      document.querySelector('[contenteditable="true"]'),
+      document.querySelector(
+        '[contenteditable="true"]',
+      ),
     ).not.toBeNull();
   });
 
   it('submits a new note to the API', async () => {
     const user = userEvent.setup();
 
-    const fetchMock = vi.fn()
-      .mockResolvedValueOnce({
-        ok: true,
-        status: 200,
-        json: async () => paginatedResponse(),
-      })
-      .mockResolvedValueOnce({
-        ok: true,
-        status: 201,
-        json: async () => ({
-          message: 'Note created successfully.',
-          data: {
+    const fetchMock = mockFetchSequence(
+      // Initial user request
+      mockUserResponse(),
+
+      // Initial notes request
+      mockResponse(paginatedResponse()),
+
+      // CSRF initialization
+      mockResponse(null, 204),
+
+      // Create note response
+      mockResponse({
+        data: {
+          ...mockNotes[0],
+          id: 2,
+          title: 'A note created in a test',
+          content:
+            '<p>This note was created automatically.</p>',
+        },
+      }),
+
+      // Reload notes after creating
+      mockResponse(
+        paginatedResponse([
+          {
             ...mockNotes[0],
             id: 2,
             title: 'A note created in a test',
             content:
               '<p>This note was created automatically.</p>',
           },
-        }),
-      })
-      .mockResolvedValueOnce({
-        ok: true,
-        status: 200,
-        json: async () =>
-          paginatedResponse([
-            ...mockNotes,
-            {
-              ...mockNotes[0],
-              id: 2,
-              title: 'A note created in a test',
-              content:
-                '<p>This note was created automatically.</p>',
-            },
-          ], 1, 1, 2),
-      });
+        ]),
+      ),
+    );
 
     vi.stubGlobal('fetch', fetchMock);
 
     renderApp();
 
-    await screen.findByText('My first NoteNest note');
+    await screen.findByText(
+      'My first NoteNest note',
+    );
 
     await user.click(
-      screen.getByRole('button', { name: /new note/i }),
+      screen.getByRole('button', {
+        name: /new note/i,
+      }),
     );
 
     await user.type(
@@ -195,29 +271,33 @@ describe('NoteNest dashboard', () => {
     );
 
     await user.click(
-      screen.getByRole('button', { name: /^Create note$/ }),
+      screen.getByRole('button', {
+        name: /^Create note$/,
+      }),
     );
 
     await waitFor(() => {
-      const createRequest = fetchMock.mock.calls.find(
-        ([url, options]) =>
-          url === '/api/notes' &&
-          options?.method === 'POST',
-      );
+      const createRequest =
+        fetchMock.mock.calls.find(
+          ([url, options]) =>
+            url === '/api/notes' &&
+            options?.method === 'POST',
+        );
 
       expect(createRequest).toBeDefined();
 
-      expect(createRequest![1]).toEqual(
-        expect.objectContaining({
-          method: 'POST',
-          headers: expect.objectContaining({
-            'Content-Type': 'application/json',
-          }),
-        }),
-      );
+      const requestOptions = createRequest![1]!;
+
+      expect(requestOptions.method).toBe('POST');
+
+      expect(
+        new Headers(
+          requestOptions.headers,
+        ).get('Content-Type'),
+      ).toBe('application/json');
 
       const requestBody = JSON.parse(
-        createRequest![1]!.body as string,
+        requestOptions.body as string,
       );
 
       expect(requestBody).toEqual({
@@ -230,60 +310,62 @@ describe('NoteNest dashboard', () => {
     });
 
     expect(
-      await screen.findByText('A note created in a test'),
+      await screen.findByText(
+        'A note created in a test',
+      ),
     ).toBeInTheDocument();
   });
 
   it('edits an existing note through the API', async () => {
     const user = userEvent.setup();
 
-    const fetchMock = vi.fn()
-      .mockResolvedValueOnce({
-        ok: true,
-        status: 200,
-        json: async () => paginatedResponse(),
-      })
-      .mockResolvedValueOnce({
-        ok: true,
-        status: 200,
-        json: async () => ({
-          message: 'Note updated successfully.',
-          data: {
+    const fetchMock = mockFetchSequence(
+      // Initial user request
+      mockUserResponse(),
+
+      // Initial notes request
+      mockResponse(paginatedResponse()),
+
+      mockResponse([]),
+
+      // CSRF initialization
+      mockResponse(null, 204),
+
+      // Update note response
+      mockResponse({
+        data: {
+          ...mockNotes[0],
+          title: 'Updated NoteNest title',
+        },
+      }),
+
+      // Reload notes after updating
+      mockResponse(
+        paginatedResponse([
+          {
             ...mockNotes[0],
             title: 'Updated NoteNest title',
           },
-        }),
-      })
-      .mockResolvedValueOnce({
-        ok: true,
-        status: 200,
-        json: async () => ({
-          data: [],
-        }),
-      })
-      .mockResolvedValueOnce({
-        ok: true,
-        status: 200,
-        json: async () =>
-          paginatedResponse([
-            {
-              ...mockNotes[0],
-              title: 'Updated NoteNest title',
-            },
-          ]),
-      });
+        ]),
+      ),
+    );
 
     vi.stubGlobal('fetch', fetchMock);
 
     renderApp();
 
-    await screen.findByText('My first NoteNest note');
-
-    await user.click(
-      screen.getByRole('button', { name: 'Edit' }),
+    await screen.findByText(
+      'My first NoteNest note',
     );
 
-    const titleInput = screen.getByLabelText('Note title');
+    await user.click(
+      screen.getByRole('button', {
+        name: 'Edit',
+      }),
+    );
+
+    const titleInput =
+      screen.getByLabelText('Note title');
 
     await user.clear(titleInput);
 
@@ -293,15 +375,18 @@ describe('NoteNest dashboard', () => {
     );
 
     await user.click(
-      screen.getByRole('button', { name: /^Save changes$/ }),
+      screen.getByRole('button', {
+        name: /^Save changes$/,
+      }),
     );
 
     await waitFor(() => {
-      const updateRequest = fetchMock.mock.calls.find(
-        ([url, options]) =>
-          url === '/api/notes/1' &&
-          options?.method === 'PATCH',
-      );
+      const updateRequest =
+        fetchMock.mock.calls.find(
+          ([url, options]) =>
+            url === '/api/notes/1' &&
+            options?.method === 'PATCH',
+        );
 
       expect(updateRequest).toBeDefined();
 
@@ -325,7 +410,9 @@ describe('NoteNest dashboard', () => {
     });
 
     expect(
-      await screen.findByText('Updated NoteNest title'),
+      await screen.findByText(
+        'Updated NoteNest title',
+      ),
     ).toBeInTheDocument();
   });
 
@@ -336,32 +423,39 @@ describe('NoteNest dashboard', () => {
       .spyOn(window, 'confirm')
       .mockReturnValue(true);
 
-    const fetchMock = vi.fn()
-      .mockResolvedValueOnce({
-        ok: true,
-        status: 200,
-        json: async () => paginatedResponse(),
-      })
-      .mockResolvedValueOnce({
-        ok: true,
-        status: 204,
-        json: async () => null,
-      })
-      .mockResolvedValueOnce({
-        ok: true,
-        status: 200,
-        json: async () =>
-          paginatedResponse([], 1, 1, 0),
-      });
+    const fetchMock = mockFetchSequence(
+      // Initial user request
+      mockUserResponse(),
+
+      // Initial notes request
+      mockResponse(paginatedResponse()),
+
+      // CSRF initialization
+      mockResponse(null, 204),
+
+      // Delete response
+      mockResponse({
+        message: 'Note deleted successfully.',
+      }),
+
+      // Reload notes after deleting
+      mockResponse(
+        paginatedResponse([]),
+      ),
+    );
 
     vi.stubGlobal('fetch', fetchMock);
 
     renderApp();
 
-    await screen.findByText('My first NoteNest note');
+    await screen.findByText(
+      'My first NoteNest note',
+    );
 
     await user.click(
-      screen.getByRole('button', { name: 'Delete' }),
+      screen.getByRole('button', {
+        name: 'Delete',
+      }),
     );
 
     expect(confirmSpy).toHaveBeenCalledWith(
@@ -369,71 +463,78 @@ describe('NoteNest dashboard', () => {
     );
 
     await waitFor(() => {
-      expect(fetchMock).toHaveBeenCalledWith(
-        '/api/notes/1',
-        expect.objectContaining({
-          method: 'DELETE',
-        }),
-      );
+      const deleteRequest =
+        fetchMock.mock.calls.find(
+          ([url, options]) =>
+            url === '/api/notes/1' &&
+            options?.method === 'DELETE',
+        );
+
+      expect(deleteRequest).toBeDefined();
     });
 
     expect(
-      await screen.findByText('A little space for your ideas'),
+      await screen.findByText(
+        'A little space for your ideas',
+      ),
     ).toBeInTheDocument();
   });
 
   it('toggles a note pin through the API', async () => {
     const user = userEvent.setup();
 
-    const fetchMock = vi.fn()
-      .mockResolvedValueOnce({
-        ok: true,
-        status: 200,
-        json: async () => paginatedResponse(),
-      })
-      .mockResolvedValueOnce({
-        ok: true,
-        status: 200,
-        json: async () => ({
-          message: 'Pin status updated successfully.',
-          data: {
-            ...mockNotes[0],
-            is_pinned: true,
-          },
-        }),
-      })
-      .mockResolvedValueOnce({
-        ok: true,
-        status: 200,
-        json: async () =>
-          paginatedResponse([
-            {
-              ...mockNotes[0],
-              is_pinned: true,
-            },
-          ]),
-      });
+    const fetchMock = mockFetchSequence(
+      // Initial user request
+      mockUserResponse(),
+
+      // Initial notes request
+      mockResponse(paginatedResponse()),
+
+      // CSRF initialization
+      mockResponse(null, 204),
+
+      // Pin request response
+      mockResponse({
+        message:
+          'Pin status updated successfully.',
+        data: {
+          ...mockNotes[0],
+          is_pinned: true,
+        },
+      }),
+    );
 
     vi.stubGlobal('fetch', fetchMock);
 
     renderApp();
 
-    await screen.findByText('My first NoteNest note');
+    await screen.findByText(
+      'My first NoteNest note',
+    );
 
     await user.click(
-      screen.getByRole('button', { name: 'Pin note' }),
+      screen.getByRole('button', {
+        name: 'Pin note',
+      }),
     );
 
     await waitFor(() => {
-      expect(fetchMock).toHaveBeenCalledWith(
-        '/api/notes/1/pin',
-        expect.objectContaining({
-          method: 'PATCH',
-          body: JSON.stringify({
-            is_pinned: true,
-          }),
-        }),
-      );
+      const pinRequest =
+        fetchMock.mock.calls.find(
+          ([url, options]) =>
+            url === '/api/notes/1/pin' &&
+            options?.method === 'PATCH',
+        );
+
+      expect(pinRequest).toBeDefined();
+
+      expect(
+        JSON.parse(
+          pinRequest![1]!.body as string,
+        ),
+      ).toEqual({
+        is_pinned: true,
+      });
     });
 
     expect(
@@ -444,13 +545,26 @@ describe('NoteNest dashboard', () => {
   });
 
   it('sends search text to the API', async () => {
-    const fetchMock = mockFetch(paginatedResponse());
+    const fetchMock = mockFetchSequence(
+      // Initial user request
+      mockUserResponse(),
+
+      // Initial notes request
+      mockResponse(paginatedResponse()),
+
+      // Search request
+      mockResponse(
+        paginatedResponse(mockNotes),
+      ),
+    );
 
     vi.stubGlobal('fetch', fetchMock);
 
     renderApp();
 
-    await screen.findByText('My first NoteNest note');
+    await screen.findByText(
+      'My first NoteNest note',
+    );
 
     fireEvent.change(
       screen.getByRole('textbox', {
@@ -464,20 +578,37 @@ describe('NoteNest dashboard', () => {
     );
 
     await waitFor(() => {
-      expect(fetchMock).toHaveBeenLastCalledWith(
-        '/api/notes?page=1&search=project',
-      );
+      expect(
+        fetchMock.mock.calls.some(
+          ([url]) =>
+            url ===
+            '/api/notes?page=1&search=project',
+        ),
+      ).toBe(true);
     });
   });
 
   it('sends the selected category to the API', async () => {
-    const fetchMock = mockFetch(paginatedResponse());
+    const fetchMock = mockFetchSequence(
+      // Initial user request
+      mockUserResponse(),
+
+      // Initial notes request
+      mockResponse(paginatedResponse()),
+
+      // Category filter request
+      mockResponse(
+        paginatedResponse(mockNotes),
+      ),
+    );
 
     vi.stubGlobal('fetch', fetchMock);
 
     renderApp();
 
-    await screen.findByText('My first NoteNest note');
+    await screen.findByText(
+      'My first NoteNest note',
+    );
 
     fireEvent.change(
       screen.getByRole('combobox', {
@@ -491,42 +622,56 @@ describe('NoteNest dashboard', () => {
     );
 
     await waitFor(() => {
-      expect(fetchMock).toHaveBeenLastCalledWith(
-        '/api/notes?page=1&category=work',
-      );
+      expect(
+        fetchMock.mock.calls.some(
+          ([url]) =>
+            url ===
+            '/api/notes?page=1&category=work',
+        ),
+      ).toBe(true);
     });
   });
 
   it('shows validation errors returned by the API', async () => {
     const user = userEvent.setup();
 
-    const fetchMock = vi.fn()
-      .mockResolvedValueOnce({
-        ok: true,
-        status: 200,
-        json: async () => paginatedResponse(),
-      })
-      .mockResolvedValueOnce({
-        ok: false,
-        status: 422,
-        json: async () => ({
-          message: 'The title field is required.',
+    const fetchMock = mockFetchSequence(
+      // Initial user request
+      mockUserResponse(),
+
+      // Initial notes request
+      mockResponse(paginatedResponse()),
+
+      // CSRF initialization
+      mockResponse(null, 204),
+
+      // Create note validation response
+      mockResponse(
+        {
+          message:
+            'The title field is required.',
           errors: {
             title: [
               'The title field is required.',
             ],
           },
-        }),
-      });
+        },
+        422,
+      ),
+    );
 
     vi.stubGlobal('fetch', fetchMock);
 
     renderApp();
 
-    await screen.findByText('My first NoteNest note');
+    await screen.findByText(
+      'My first NoteNest note',
+    );
 
     await user.click(
-      screen.getByRole('button', { name: /new note/i }),
+      screen.getByRole('button', {
+        name: /new note/i,
+      }),
     );
 
     await user.type(
@@ -540,7 +685,9 @@ describe('NoteNest dashboard', () => {
     );
 
     await user.click(
-      screen.getByRole('button', { name: /^Create note$/ }),
+      screen.getByRole('button', {
+        name: /^Create note$/,
+      }),
     );
 
     expect(
@@ -563,24 +710,26 @@ describe('NoteNest dashboard', () => {
     expect(
       await screen.findByRole('alert'),
     ).toHaveTextContent(
-      'Could not connect to the server',
+      'Network unavailable',
     );
   });
 
   it('disables the next button on the last page', async () => {
     vi.stubGlobal(
       'fetch',
-      mockFetch(
-        paginatedResponse(mockNotes, 1, 1, 1),
-      ),
+      mockInitialFetch(mockNotes),
     );
 
     renderApp();
 
-    await screen.findByText('My first NoteNest note');
+    await screen.findByText(
+      'My first NoteNest note',
+    );
 
     expect(
-      screen.getByRole('button', { name: /next/i }),
+      screen.getByRole('button', {
+        name: /next/i,
+      }),
     ).toBeDisabled();
   });
 });

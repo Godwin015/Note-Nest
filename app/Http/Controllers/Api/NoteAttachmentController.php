@@ -16,6 +16,11 @@ class NoteAttachmentController extends Controller
      */
     public function store(Request $request, Note $note): JsonResponse
     {
+        // Ensure the authenticated user owns the note.
+        $note = $request->user()
+            ->notes()
+            ->findOrFail($note->id);
+
         $validated = $request->validate([
             'file' => [
                 'required',
@@ -65,8 +70,13 @@ class NoteAttachmentController extends Controller
     /**
      * List attachments belonging to a note.
      */
-    public function index(Note $note): JsonResponse
+    public function index(Request $request, Note $note): JsonResponse
     {
+        // Ensure the authenticated user owns the note.
+        $note = $request->user()
+            ->notes()
+            ->findOrFail($note->id);
+
         $attachments = $note->attachments()
             ->latest()
             ->get();
@@ -80,9 +90,15 @@ class NoteAttachmentController extends Controller
      * Delete an attachment and its stored file.
      */
     public function destroy(
+        Request $request,
         Note $note,
         NoteAttachment $attachment
     ): JsonResponse {
+        // Ensure the authenticated user owns the note.
+        $note = $request->user()
+            ->notes()
+            ->findOrFail($note->id);
+
         if ((int) $attachment->note_id !== (int) $note->id) {
             return response()->json([
                 'message' => 'Attachment not found for this note.',
@@ -100,31 +116,41 @@ class NoteAttachmentController extends Controller
         ]);
     }
 
+    /**
+     * Preview an image attachment belonging to a note.
+     */
+    public function preview(
+        Request $request,
+        Note $note,
+        NoteAttachment $attachment
+    ) {
+        // Ensure the authenticated user owns the note.
+        $note = $request->user()
+            ->notes()
+            ->findOrFail($note->id);
 
-    public function preview(Note $note, NoteAttachment $attachment)
-    {
-        // Ensure the attachment belongs to the requested note
+        // Ensure the attachment belongs to the requested note.
         if ((int) $attachment->note_id !== (int) $note->id) {
             return response()->json([
                 'message' => 'Attachment not found for this note.',
             ], 404);
         }
 
-        // Only allow image previews
+        // Only allow image previews.
         if (!str_starts_with($attachment->mime_type, 'image/')) {
             return response()->json([
                 'message' => 'Only image attachments can be previewed.',
             ], 422);
         }
 
-        // Ensure the image exists in storage
+        // Ensure the image exists in storage.
         if (!Storage::disk('public')->exists($attachment->file_path)) {
             return response()->json([
                 'message' => 'Attachment file not found.',
             ], 404);
         }
 
-        // Return the image directly to the browser
+        // Return the image directly to the browser.
         return response()->file(
             Storage::disk('public')->path($attachment->file_path),
             [
@@ -134,15 +160,19 @@ class NoteAttachmentController extends Controller
         );
     }
 
-
-
     /**
      * Download an attachment belonging to a note.
      */
     public function download(
+        Request $request,
         Note $note,
         NoteAttachment $attachment
     ) {
+        // Ensure the authenticated user owns the note.
+        $note = $request->user()
+            ->notes()
+            ->findOrFail($note->id);
+
         if ((int) $attachment->note_id !== (int) $note->id) {
             return response()->json([
                 'message' => 'Attachment not found for this note.',
@@ -160,5 +190,4 @@ class NoteAttachmentController extends Controller
             $attachment->original_name
         );
     }
-
 }

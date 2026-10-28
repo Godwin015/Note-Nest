@@ -1,9 +1,14 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useEditor, EditorContent } from '@tiptap/react';
+import {
+    apiFetch,
+    initializeCsrf,
+    getCsrfToken,
+    logoutUser,
+} from './api';
 import StarterKit from '@tiptap/starter-kit';
 import CharacterCount from '@tiptap/extension-character-count';
-import Underline from '@tiptap/extension-underline';
 import DOMPurify from 'dompurify';
 import './App.css';
 import {
@@ -46,6 +51,12 @@ type Note = {
   updated_at: string;
 };
 
+type AuthenticatedUser = {
+    id: number;
+    name: string;
+    email: string;
+};
+
 type PaginatedNotes = {
   data: Note[];
   current_page: number;
@@ -64,7 +75,7 @@ type NoteAttachment = {
   updated_at: string;
 };
 
-const API_URL = '/api/notes';
+const API_URL = '/notes';
 
 const NOTE_COLORS = [
   { name: 'White', value: '#FFFFFF' },
@@ -88,6 +99,7 @@ function formatModificationDate(date: string): string {
 
 function App() {
   const [notes, setNotes] = useState<Note[]>([]);
+  const [user, setUser] = useState<AuthenticatedUser | null>(null);
   const [search, setSearch] = useState('');
   const [category, setCategory] = useState('');
   const [page, setPage] = useState(1);
@@ -113,7 +125,6 @@ function App() {
   const editor = useEditor({
     extensions: [
       StarterKit,
-      Underline,
       CharacterCount.configure({
         limit: 5000,
       }),
@@ -124,56 +135,68 @@ function App() {
     },
   });
 
-  async function loadNotes(
-    nextPage = page,
-    nextSearch = search,
-    nextCategory = category,
-    nextPinnedOnly = pinnedOnly,
-  ) {
-    setLoading(true);
-    setError('');
 
-    try {
-      const params = new URLSearchParams({
-        page: String(nextPage),
-      });
+const loadNotes = useCallback(
+    async (
+        nextPage = page,
+        nextSearch = search,
+        nextCategory = category,
+        nextPinnedOnly = pinnedOnly,
+    ) => {
+        setLoading(true);
+        setError('');
 
-      if (nextSearch.trim()) params.set('search', nextSearch.trim());
-      if (nextCategory) params.set('category', nextCategory);
-      if (nextPinnedOnly) params.set('is_pinned', '1');
+        try {
+            const params = new URLSearchParams({
+                page: String(nextPage),
+            });
 
-      const response = await fetch(`${API_URL}?${params}`);
+            if (nextSearch.trim()) {
+                params.set('search', nextSearch.trim());
+            }
 
-      if (!response.ok) {
-        throw new Error('Unable to load notes. Please try again.');
-      }
+            if (nextCategory) {
+                params.set('category', nextCategory);
+            }
 
-      const result: PaginatedNotes = await response.json();
+            if (nextPinnedOnly) {
+                params.set('is_pinned', '1');
+            }
 
-      setNotes(result.data);
-      setPage(result.current_page);
-      setLastPage(result.last_page);
-      setTotal(result.total);
-    } catch {
-      setError(
-        'Could not connect to the server. Make sure your Laravel backend is running.',
-      );
-    } finally {
-      setLoading(false);
-    }
-  }
+            const response = await apiFetch(`${API_URL}?${params}`);
 
-  
+            if (!response.ok) {
+                throw new Error('Unable to load notes. Please try again.');
+            }
+
+            const result: PaginatedNotes = await response.json();
+
+            setNotes(result.data);
+            setPage(result.current_page);
+            setLastPage(result.last_page);
+            setTotal(result.total);
+        } catch {
+            setError(
+                'Could not connect to the server. Make sure your Laravel backend is running.',
+            );
+        } finally {
+            setLoading(false);
+        }
+    },
+    [page, search, category, pinnedOnly],
+);
+
   async function loadAttachments(noteId: number) {
     setAttachmentLoading(true);
     setAttachmentError('');
 
     try {
-      const response = await fetch(`${API_URL}/${noteId}/attachments`, {
-        headers: {
-          Accept: 'application/json',
-        },
-      });
+      const response = await apiFetch(
+          `${API_URL}/${noteId}/attachments`,
+          {
+              method: 'GET',
+          }
+      );
 
       if (!response.ok) {
         throw new Error('Unable to load attachments.');
@@ -248,7 +271,7 @@ function handleFileSelection(
 }
 
 
-function uploadAttachment(file: File) {
+async function uploadAttachment(file: File) {
   if (!editingNote) return;
 
   setAttachmentError('');
@@ -280,14 +303,26 @@ function uploadAttachment(file: File) {
   const formData = new FormData();
   formData.append('file', file);
 
+  await initializeCsrf();
+
+  const csrfToken = getCsrfToken();
+
+  if (!csrfToken) {
+      setAttachmentError('Unable to initialize CSRF protection.');
+      setAttachmentUploading(false);
+      return;
+  }
+
   const xhr = new XMLHttpRequest();
 
   xhr.open(
-    'POST',
-    `${API_URL}/${editingNote.id}/attachments`,
+      'POST',
+      `/api${API_URL}/${editingNote.id}/attachments`,
   );
 
   xhr.setRequestHeader('Accept', 'application/json');
+
+  xhr.setRequestHeader('X-XSRF-TOKEN', csrfToken);
 
   xhr.upload.onprogress = (event) => {
     if (event.lengthComputable) {
@@ -342,28 +377,39 @@ function uploadAttachment(file: File) {
 }
 
 
+
 async function uploadSelectedFiles(
   noteId: number,
   files: File[],
 ) {
+  await initializeCsrf();
+
+  const csrfToken = getCsrfToken();
+
+  if (!csrfToken) {
+    throw new Error('Unable to initialize CSRF protection.');
+  }
+
   for (const file of files) {
     const formData = new FormData();
 
     formData.append('file', file);
 
     const response = await fetch(
-      `${API_URL}/${noteId}/attachments`,
+      `/api${API_URL}/${noteId}/attachments`,
       {
         method: 'POST',
+        credentials: 'same-origin',
         headers: {
           Accept: 'application/json',
+          'X-XSRF-TOKEN': csrfToken,
+          'X-Requested-With': 'XMLHttpRequest',
         },
         body: formData,
       },
     );
 
     const result = await response.json();
-
     if (!response.ok) {
       const validationMessage = result.errors
         ? Object.values(result.errors).flat().join(' ')
@@ -375,9 +421,6 @@ async function uploadSelectedFiles(
     }
   }
 }
-
-
-
 
   async function deleteAttachment(attachmentId: number) {
     if (!editingNote) return;
@@ -391,17 +434,14 @@ async function uploadSelectedFiles(
     setAttachmentError('');
 
     try {
-      const response = await fetch(
-        `${API_URL}/${editingNote.id}/attachments/${attachmentId}`,
+      const response = await apiFetch(
+        `/notes/${editingNote.id}/attachments/${attachmentId}`,
         {
           method: 'DELETE',
-          headers: {
-            Accept: 'application/json',
-          },
         },
       );
 
-      const result = await response.json();
+      const result = await response.json().catch(() => ({}));
 
       if (!response.ok) {
         throw new Error(
@@ -420,47 +460,48 @@ async function uploadSelectedFiles(
   }
 
 
-
-  
-  useEffect(() => {
+useEffect(() => {
     let cancelled = false;
 
-    async function fetchInitialNotes() {
-      try {
-        const response = await fetch(`${API_URL}?page=1`);
+    async function initializeDashboard() {
+        try {
+            const response = await apiFetch('/user', {
+                method: 'GET',
+                headers: {
+                    Accept: 'application/json',
+                },
+            });
 
-        if (!response.ok) {
-          throw new Error('Unable to load notes.');
+            if (!response.ok) {
+                throw new Error('Unable to load user details.');
+            }
+
+            const result = await response.json();
+
+            if (cancelled) return;
+
+            setUser(result.user);
+
+            await loadNotes(1, '', '', false);
+        } catch (err) {
+            if (!cancelled) {
+                setError(
+                    err instanceof Error
+                        ? err.message
+                        : 'Unable to initialize NoteNest.',
+                );
+
+                setLoading(false);
+            }
         }
-
-        const result: PaginatedNotes = await response.json();
-
-        if (cancelled) return;
-
-        setNotes(result.data);
-        setPage(result.current_page);
-        setLastPage(result.last_page);
-        setTotal(result.total);
-      } catch {
-        if (!cancelled) {
-          setError(
-            'Could not connect to the server. Make sure your Laravel backend is running.',
-          );
-        }
-      } finally {
-        if (!cancelled) {
-          setLoading(false);
-        }
-      }
     }
 
-    void fetchInitialNotes();
+    void initializeDashboard();
 
     return () => {
-      cancelled = true;
+        cancelled = true;
     };
-  }, []);
-
+}, [loadNotes]);
 
 function openCreateForm() {
   setEditingNote(null);
@@ -503,21 +544,22 @@ function openCreateForm() {
     try {
       const isEditing = editingNote !== null;
 
-      const response = await fetch(
-        isEditing ? `${API_URL}/${editingNote.id}` : API_URL,
-        {
-          method: isEditing ? 'PATCH' : 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Accept: 'application/json',
+      await initializeCsrf();
+
+      const response = await apiFetch(
+          isEditing ? `/notes/${editingNote.id}` : '/notes',
+          {
+              method: isEditing ? 'PATCH' : 'POST',
+              headers: {
+                  'Content-Type': 'application/json',
+              },
+              body: JSON.stringify({
+                  title: title.trim(),
+                  content: editor?.getHTML() ?? '',
+                  category: noteCategory || null,
+                  color: noteColor,
+              }),
           },
-          body: JSON.stringify({
-            title: title.trim(),
-            content: editor?.getHTML() ?? '',
-            category: noteCategory || null,
-            color: noteColor,
-          }),
-        },
       );
 
       const result = await response.json();
@@ -552,78 +594,125 @@ function openCreateForm() {
   }
 
 
+  
   async function deleteNote(note: Note) {
     if (!window.confirm(`Delete "${note.title}"? This cannot be undone.`)) {
       return;
     }
 
+    setError('');
+
     try {
-      const response = await fetch(`${API_URL}/${note.id}`, {
+      const response = await apiFetch(`/notes/${note.id}`, {
         method: 'DELETE',
-        headers: { Accept: 'application/json' },
       });
 
-      if (!response.ok) throw new Error('Unable to delete this note.');
-
-      await loadNotes(page, search, category);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Delete failed.');
-    }
-  }
-
-  
-  async function togglePin(note: Note) {
-    const newPinnedState = !note.is_pinned;
-
-    try {
-      const response = await fetch(`${API_URL}/${note.id}/pin`, {
-        method: 'PATCH',
-        headers: {
-          'Content-Type': 'application/json',
-          Accept: 'application/json',
-        },
-        body: JSON.stringify({ is_pinned: newPinnedState }),
-      });
+      const result = await response.json().catch(() => ({}));
 
       if (!response.ok) {
-        throw new Error('Unable to update pin status.');
-      }
-
-      // Update the existing notes in React without reloading the list.
-      setNotes((currentNotes) => {
-        const updatedNotes = currentNotes.map((currentNote) =>
-          currentNote.id === note.id
-            ? { ...currentNote, is_pinned: newPinnedState }
-            : currentNote
+        throw new Error(
+          result.message || 'Unable to delete this note.',
         );
-
-        // Remove an unpinned note from the Pinned notes view.
-        const visibleNotes = pinnedOnly
-          ? updatedNotes.filter((currentNote) => currentNote.is_pinned)
-          : updatedNotes;
-
-        // Keep pinned notes first, followed by recently updated notes.
-        return visibleNotes.sort((a, b) => {
-          if (a.is_pinned !== b.is_pinned) {
-            return Number(b.is_pinned) - Number(a.is_pinned);
-          }
-
-          return (
-            new Date(b.updated_at).getTime() -
-            new Date(a.updated_at).getTime()
-          );
-        });
-      });
-
-      if (pinnedOnly && !newPinnedState) {
-        setTotal((currentTotal) => Math.max(0, currentTotal - 1));
       }
+
+      await loadNotes(page, search, category, pinnedOnly);
     } catch (err) {
       setError(
-        err instanceof Error ? err.message : 'Pin update failed.'
+        err instanceof Error
+          ? err.message
+          : 'Unable to delete this note.',
       );
     }
   }
+
+
+  async function handleLogout() {
+      const confirmed = window.confirm(
+          'Are you sure you want to log out?',
+      );
+
+      if (!confirmed) return;
+
+      try {
+          await logoutUser();
+
+          window.location.href = '/login';
+      } catch (err) {
+          setError(
+              err instanceof Error
+                  ? err.message
+                  : 'Unable to log out.',
+          );
+      }
+  }
+
+async function togglePin(note: Note) {
+  const newPinnedState = !note.is_pinned;
+
+  try {
+    const response = await apiFetch(`/notes/${note.id}/pin`, {
+      method: 'PATCH',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        is_pinned: newPinnedState,
+      }),
+    });
+
+    const result = await response.json().catch(() => ({}));
+
+    if (!response.ok) {
+      const validationMessage = result.errors
+        ? Object.values(result.errors).flat().join(' ')
+        : result.message;
+
+      throw new Error(
+        validationMessage || 'Unable to update pin status.',
+      );
+    }
+
+    // Update the existing notes in React without reloading the list.
+    setNotes((currentNotes) => {
+      const updatedNotes = currentNotes.map((currentNote) =>
+        currentNote.id === note.id
+          ? {
+              ...currentNote,
+              is_pinned: newPinnedState,
+            }
+          : currentNote,
+      );
+
+      // Remove an unpinned note from the Pinned notes view.
+      const visibleNotes = pinnedOnly
+        ? updatedNotes.filter((currentNote) => currentNote.is_pinned)
+        : updatedNotes;
+
+      // Keep pinned notes first, followed by recently updated notes.
+      return visibleNotes.sort((a, b) => {
+        if (a.is_pinned !== b.is_pinned) {
+          return Number(b.is_pinned) - Number(a.is_pinned);
+        }
+
+        return (
+          new Date(b.updated_at).getTime() -
+          new Date(a.updated_at).getTime()
+        );
+      });
+    });
+
+    if (pinnedOnly && !newPinnedState) {
+      setTotal((currentTotal) => Math.max(0, currentTotal - 1));
+    }
+  } catch (err) {
+    setError(
+      err instanceof Error
+        ? err.message
+        : 'Pin update failed.',
+    );
+  }
+}
+
 
 
   function changeSearch(value: string) {
@@ -745,12 +834,27 @@ function openCreateForm() {
           color="indigo"
           variant="light"
       >
-          NU
+          {user?.name
+              ? user.name
+                    .split(' ')
+                    .map((part) => part.charAt(0))
+                    .join('')
+                    .toUpperCase()
+                    .slice(0, 2)
+              : 'NU'}
       </Avatar>
 
       <Box className="sidebar-user-details">
-          <Text size="sm" fw={600} className="sidebar-user-name">
-              NoteNest User
+          <Text
+              size="sm"
+              fw={600}
+              className="sidebar-user-name"
+          >
+              {user?.name ?? 'Loading user...'}
+          </Text>
+
+          <Text size="xs" c="dimmed">
+              {user?.email ?? 'Loading email...'}
           </Text>
 
           <Text size="xs" c="dimmed">
@@ -758,6 +862,16 @@ function openCreateForm() {
           </Text>
       </Box>
   </Group>
+  <Divider my="sm" />
+
+    <button
+        type="button"
+        className="secondary-button"
+        onClick={() => void handleLogout()}
+        style={{ width: '100%' }}
+    >
+        Logout
+    </button>
 
 </AppShell.Navbar>
 
@@ -1272,7 +1386,7 @@ function openCreateForm() {
                 {attachment.mime_type.startsWith('image/') && (
                   <img
                     className="attachment-preview"
-                    src={`${API_URL}/${editingNote.id}/attachments/${attachment.id}/preview`}
+                    src={`/api${API_URL}/${editingNote.id}/attachments/${attachment.id}/preview`}
                     alt={attachment.original_name}
                     loading="lazy"
                   />
@@ -1289,7 +1403,7 @@ function openCreateForm() {
               <div className="attachment-actions">
                 <a
                   className="attachment-download"
-                  href={`${API_URL}/${editingNote.id}/attachments/${attachment.id}/download`}
+                  href={`/api${API_URL}/${editingNote.id}/attachments/${attachment.id}/download`}
                   target="_blank"
                   rel="noopener noreferrer"
                 >
