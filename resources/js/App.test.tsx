@@ -201,11 +201,13 @@ describe('NoteNest dashboard', () => {
       screen.getByLabelText('Note title'),
     ).toBeInTheDocument();
 
-    expect(
-      document.querySelector(
-        '[contenteditable="true"]',
-      ),
-    ).not.toBeNull();
+    await waitFor(() => {
+        expect(
+            document.querySelector(
+                '[contenteditable="true"]',
+            ),
+        ).not.toBeNull();
+    });
   });
 
   it('submits a new note to the API', async () => {

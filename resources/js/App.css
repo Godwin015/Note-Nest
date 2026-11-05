@@ -225,6 +225,34 @@
   color: #aaa5b8;
 }
 
+.search-box button {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    width: 26px;
+    height: 26px;
+    padding: 0;
+    color: #8d87a2;
+    background: transparent;
+    border: none;
+    border-radius: 50%;
+    font-size: 20px;
+    line-height: 1;
+    cursor: pointer;
+    transition: background 160ms ease, color 160ms ease;
+}
+
+.search-box button:hover {
+    color: #5b3fc4;
+    background: #f1edfc;
+}
+
+.search-box button:focus-visible {
+    outline: 2px solid #a394ec;
+    outline-offset: 2px;
+}
+
 .toolbar select,
 .note-modal select {
   min-height: 48px;

@@ -9,6 +9,7 @@ use Illuminate\Http\Request;
 
 class NoteController extends Controller
 {
+    
     public function index(Request $request): JsonResponse
     {
         $filters = $request->validate([
@@ -16,37 +17,99 @@ class NoteController extends Controller
             'category' => ['sometimes', 'nullable', 'string', 'max:50'],
             'is_pinned' => ['sometimes', 'boolean'],
             'page' => ['sometimes', 'integer', 'min:1'],
+            'per_page' => ['sometimes', 'integer', 'min:1', 'max:50'],
+
+            'created_from' => ['sometimes', 'nullable', 'date_format:Y-m-d'],
+            'created_to' => [
+                'sometimes',
+                'nullable',
+                'date_format:Y-m-d',
+                'after_or_equal:created_from',
+            ],
+
+            'sort_by' => [
+                'sometimes',
+                'string',
+                'in:created_at,updated_at,title',
+            ],
+            'sort_direction' => [
+                'sometimes',
+                'string',
+                'in:asc,desc',
+            ],
         ]);
 
-        // Retrieve only notes belonging to the authenticated user.
+        // Always restrict results to the authenticated user's notes.
         $query = $request->user()->notes();
 
-        if (!empty($filters['search'])) {
-            $search = $filters['search'];
+        // Search note titles and content.
+        $search = trim($filters['search'] ?? '');
 
+        if ($search !== '') {
             $query->where(function ($q) use ($search) {
                 $q->where('title', 'like', "%{$search}%")
                     ->orWhere('content', 'like', "%{$search}%");
             });
         }
 
+        // Filter by category.
         if (!empty($filters['category'])) {
             $query->where('category', $filters['category']);
         }
 
+        // Filter by pinned status.
         if (isset($filters['is_pinned'])) {
             $query->where('is_pinned', $filters['is_pinned']);
         }
 
+        if (!empty($filters['created_from'])) {
+            $query->where(
+                'created_at',
+                '>=',
+                $filters['created_from'] . ' 00:00:00'
+            );
+        }
+
+        if (!empty($filters['created_to'])) {
+            $query->where(
+                'created_at',
+                '<',
+                \Carbon\Carbon::parse($filters['created_to'])
+                    ->addDay()
+                    ->startOfDay()
+            );
+        }
+
+        // Allow only explicitly approved sorting fields.
+        $allowedSortFields = [
+            'created_at',
+            'updated_at',
+            'title',
+        ];
+
+        $sortBy = $filters['sort_by'] ?? null;
+        $sortDirection = $filters['sort_direction'] ?? 'desc';
+
+        if ($sortBy && in_array($sortBy, $allowedSortFields, true)) {
+            $query->orderBy($sortBy, $sortDirection)
+                ->orderByDesc('id');
+        } else {
+            // Preserve the existing default ordering.
+            $query->orderByDesc('is_pinned')
+                ->orderByDesc('updated_at')
+                ->orderByDesc('id');
+        }
+
+        // Default to 10 records, with a maximum of 50.
+        $perPage = $filters['per_page'] ?? 10;
+
         $notes = $query
-            ->orderByDesc('is_pinned')
-            ->orderByDesc('updated_at')
-            ->orderByDesc('id')
-            ->paginate(10)
+            ->paginate($perPage)
             ->withQueryString();
 
         return response()->json($notes);
     }
+
 
     public function store(Request $request): JsonResponse
     {

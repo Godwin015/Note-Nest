@@ -22,5 +22,5 @@
         "resources/js/**/*.ts",
         "resources/js/**/*.tsx",
         "resources/js/test/setup.ts"
-    ]
+, "resources/js/NoteNestApp.tsx.backup"    ]
 }

@@ -1,14 +1,19 @@
-import { useCallback, useEffect, useState } from 'react';
+import {
+    lazy,
+    Suspense,
+    useCallback,
+    useEffect,
+    useRef,
+    useState,
+} from 'react';
+
 import { createPortal } from 'react-dom';
-import { useEditor, EditorContent } from '@tiptap/react';
 import {
     apiFetch,
     initializeCsrf,
     getCsrfToken,
     logoutUser,
 } from './api';
-import StarterKit from '@tiptap/starter-kit';
-import CharacterCount from '@tiptap/extension-character-count';
 import DOMPurify from 'dompurify';
 import './App.css';
 import {
@@ -26,6 +31,8 @@ import {
 } from '@mantine/core';
 
 import { useDisclosure } from '@mantine/hooks';
+
+const NoteEditor = lazy(() => import('./NoteEditor'));
 
 const MAX_ATTACHMENT_SIZE = 50 * 1024 * 1024;
 
@@ -101,6 +108,7 @@ function App() {
   const [notes, setNotes] = useState<Note[]>([]);
   const [user, setUser] = useState<AuthenticatedUser | null>(null);
   const [search, setSearch] = useState('');
+  const searchTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [category, setCategory] = useState('');
   const [page, setPage] = useState(1);
   const [lastPage, setLastPage] = useState(1);
@@ -122,69 +130,64 @@ function App() {
   const [sidebarOpened, { toggle: toggleSidebar }] = useDisclosure();
   const [pinnedOnly, setPinnedOnly] = useState(false);
   const [content, setContent] = useState('');
-  const editor = useEditor({
-    extensions: [
-      StarterKit,
-      CharacterCount.configure({
-        limit: 5000,
-      }),
-    ],
-    content: content,
-    onUpdate: ({ editor }) => {
-      setContent(editor.getHTML());
-    },
-  });
 
 
-const loadNotes = useCallback(
-    async (
-        nextPage = page,
-        nextSearch = search,
-        nextCategory = category,
-        nextPinnedOnly = pinnedOnly,
-    ) => {
-        setLoading(true);
-        setError('');
+  const loadNotes = useCallback(
+      async (
+          nextPage = page,
+          nextSearch = search,
+          nextCategory = category,
+          nextPinnedOnly = pinnedOnly,
+      ) => {
+          setLoading(true);
+          setError('');
 
-        try {
-            const params = new URLSearchParams({
-                page: String(nextPage),
-            });
+          try {
+              const params = new URLSearchParams({
+                  page: String(nextPage),
+              });
 
-            if (nextSearch.trim()) {
-                params.set('search', nextSearch.trim());
-            }
+              if (nextSearch.trim()) {
+                  params.set('search', nextSearch.trim());
+              }
 
-            if (nextCategory) {
-                params.set('category', nextCategory);
-            }
+              if (nextCategory) {
+                  params.set('category', nextCategory);
+              }
 
-            if (nextPinnedOnly) {
-                params.set('is_pinned', '1');
-            }
+              if (nextPinnedOnly) {
+                  params.set('is_pinned', '1');
+              }
 
-            const response = await apiFetch(`${API_URL}?${params}`);
+              const response = await apiFetch(`${API_URL}?${params}`);
 
-            if (!response.ok) {
-                throw new Error('Unable to load notes. Please try again.');
-            }
+              if (!response.ok) {
+                  throw new Error('Unable to load notes. Please try again.');
+              }
 
-            const result: PaginatedNotes = await response.json();
+              const result: PaginatedNotes = await response.json();
 
-            setNotes(result.data);
-            setPage(result.current_page);
-            setLastPage(result.last_page);
-            setTotal(result.total);
-        } catch {
-            setError(
-                'Could not connect to the server. Make sure your Laravel backend is running.',
-            );
-        } finally {
-            setLoading(false);
-        }
-    },
-    [page, search, category, pinnedOnly],
-);
+              setNotes(result.data);
+              setPage(result.current_page);
+              setLastPage(result.last_page);
+              setTotal(result.total);
+          } catch {
+              setError(
+                  'Could not connect to the server. Make sure your Laravel backend is running.',
+              );
+          } finally {
+              setLoading(false);
+          }
+      },
+      [page, search, category, pinnedOnly],
+  );
+
+  // Keep a reference to the latest loadNotes function
+  const loadNotesRef = useRef(loadNotes);
+
+  useEffect(() => {
+      loadNotesRef.current = loadNotes;
+  }, [loadNotes]);
 
   async function loadAttachments(noteId: number) {
     setAttachmentLoading(true);
@@ -482,7 +485,7 @@ useEffect(() => {
 
             setUser(result.user);
 
-            await loadNotes(1, '', '', false);
+            await loadNotesRef.current(1, '', '', false);
         } catch (err) {
             if (!cancelled) {
                 setError(
@@ -501,23 +504,20 @@ useEffect(() => {
     return () => {
         cancelled = true;
     };
-}, [loadNotes]);
+}, []);
 
-function openCreateForm() {
-  setEditingNote(null);
-  setAttachments([]);
-  setSelectedFiles([]);
-  setAttachmentError('');
-  setTitle('');
-  setContent('');
 
-  editor?.commands.clearContent();
-  editor?.commands.unsetAllMarks();
-
-  setNoteCategory('personal');
-  setNoteColor('#FFFFFF');
-  setShowForm(true);
-}
+  function openCreateForm() {
+    setEditingNote(null);
+    setAttachments([]);
+    setSelectedFiles([]);
+    setAttachmentError('');
+    setTitle('');
+    setContent('');
+    setNoteCategory('personal');
+    setNoteColor('#FFFFFF');
+    setShowForm(true);
+  }
 
   function openEditForm(note: Note) {
     setEditingNote(note);
@@ -527,13 +527,11 @@ function openCreateForm() {
     void loadAttachments(note.id);
     setTitle(note.title);
     setContent(note.content);
-    editor?.commands.setContent(note.content);
     setNoteCategory(note.category ?? 'personal');
     setNoteColor(note.color ?? '#FFFFFF');
     setShowForm(true);
   }
 
-  
   async function saveNote(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
@@ -555,7 +553,7 @@ function openCreateForm() {
               },
               body: JSON.stringify({
                   title: title.trim(),
-                  content: editor?.getHTML() ?? '',
+                  content: content,
                   category: noteCategory || null,
                   color: noteColor,
               }),
@@ -716,16 +714,36 @@ async function togglePin(note: Note) {
 
 
   function changeSearch(value: string) {
-    setSearch(value);
-    setPage(1);
-    void loadNotes(1, value, category);
+      setSearch(value);
+      setPage(1);
+
+      if (searchTimeoutRef.current) {
+          clearTimeout(searchTimeoutRef.current);
+      }
+
+      searchTimeoutRef.current = setTimeout(() => {
+          void loadNotes(1, value, category);
+      }, 400);
   }
 
+  useEffect(() => {
+      return () => {
+          if (searchTimeoutRef.current) {
+              clearTimeout(searchTimeoutRef.current);
+          }
+      };
+  }, []);
+
   function changeCategory(value: string) {
-    setCategory(value);
-    setPinnedOnly(false);
-    setPage(1);
-    void loadNotes(1, search, value, false);
+      if (searchTimeoutRef.current) {
+          clearTimeout(searchTimeoutRef.current);
+          searchTimeoutRef.current = null;
+      }
+
+      setCategory(value);
+      setPinnedOnly(false);
+      setPage(1);
+      void loadNotes(1, search, value, false);
   }
 
   return (
@@ -949,13 +967,34 @@ async function togglePin(note: Note) {
         <div className="toolbar">
           <label className="search-box">
             <span aria-hidden="true">⌕</span>
+
             <input
-              value={search}
-              onChange={(event) => changeSearch(event.target.value)}
-              placeholder="Search your notes..."
-              aria-label="Search notes"
+                value={search}
+                onChange={(event) => changeSearch(event.target.value)}
+                placeholder="Search your notes..."
+                aria-label="Search notes"
             />
-          </label>
+
+            {search && (
+                <button
+                    type="button"
+                    onClick={() => {
+                        if (searchTimeoutRef.current) {
+                            clearTimeout(searchTimeoutRef.current);
+                            searchTimeoutRef.current = null;
+                        }
+
+                        setSearch('');
+                        setPage(1);
+                        void loadNotes(1, '', category, pinnedOnly);
+                    }}
+                    aria-label="Clear search"
+                    title="Clear search"
+                >
+                    ×
+                </button>
+            )}
+        </label>
 
           <select
             value={category}
@@ -1116,142 +1155,19 @@ async function togglePin(note: Note) {
                   required
                   placeholder="Give your note a title"
                 />
-              </label>
-
-              <div className="editor-field">
-              <div className="editor-field-label">Content</div>             
-              <div className="tiptap-toolbar">
-                <button
-                  type="button"
-                  className={editor?.isActive('bold') ? 'is-active' : ''}
-                  onMouseDown={(event) => {
-                    event.preventDefault();
-                  }}
-                  onClick={() => {
-                    editor?.chain().focus().toggleBold().run();
-                  }}
-                  disabled={!editor}
-                  aria-label="Bold"
-                  title="Bold"
-                >
-                  <strong>B</strong>
-                </button>
-
-                <button
-                  type="button"
-                  onMouseDown={(event) => {
-                    event.preventDefault();
-                  }}
-                  onClick={() => {
-                    editor?.chain().focus().toggleItalic().run();
-                  }}
-                  disabled={!editor}
-                  aria-label="Italic"
-                  title="Italic"
-                >
-                  <em>I</em>
-                </button>
-
-                <button
-                  type="button"
-                  onMouseDown={(event) => {
-                    event.preventDefault();
-                  }}
-                  onClick={() => {
-                    editor?.chain().focus().toggleUnderline().run();
-                  }}
-                  disabled={!editor}
-                  aria-label="Underline"
-                  title="Underline"
-                >
-                  <u>U</u>
-                </button>
-
-                <button
-                  type="button"
-                  onMouseDown={(event) => {
-                    event.preventDefault();
-                  }}
-                  onClick={() => {
-                    editor?.chain().focus().toggleHeading({level: 2}).run();
-                  }}
-                  disabled={!editor}
-                  aria-label="Heading"
-                  title="Heading"
-                >
-                  H
-                </button>
-
-                <button
-                  type="button"
-                  onMouseDown={(event) => {
-                    event.preventDefault();
-                  }}
-                  onClick={() => {
-                    editor?.chain().focus().toggleBulletList().run();
-                  }}
-                  disabled={!editor}
-                  aria-label="Bullet list"
-                  title="Bullet list"
-                >
-                  •
-                </button>
-
-                <button
-                  type="button"
-                  onMouseDown={(event) => {
-                    event.preventDefault();
-                  }}
-                  onClick={() => {
-                    editor?.chain().focus().toggleOrderedList().run();
-                  }}
-                  disabled={!editor}
-                  aria-label="Numbered list"
-                  title="Numbered list"
-                >
-                  1.
-                </button>
-
-                <button
-                  type="button"
-                  onMouseDown={(event) => {
-                    event.preventDefault();
-                  }}
-                  onClick={() => {
-                    editor?.chain().focus().undo().run();
-                  }}
-                  disabled={!editor}
-                  aria-label="Undo"
-                  title="Undo"
-                >
-                  ↶
-                </button>
-
-                <button
-                  type="button"
-                  onMouseDown={(event) => {
-                    event.preventDefault();
-                  }}
-                  onClick={() => {
-                    editor?.chain().focus().redo().run();
-                  }}
-                  disabled={!editor}
-                  aria-label="Redo"
-                  title="Redo"
-                >
-                  ↷
-                </button>
-              </div>
-
-              <div className="tiptap-editor">
-                <EditorContent editor={editor} />
-              </div>
-
-              <span className="character-count">
-                {editor?.storage.characterCount.characters() ?? 0}/5000 characters
-              </span>
-             </div>
-
+            </label>
+            <Suspense
+              fallback={
+                <div className="state-message">
+                  Loading rich-text editor...
+                </div>
+              }
+            >
+              <NoteEditor
+                content={content}
+                onChange={setContent}
+              />
+            </Suspense>
               <label>
                 Category
                 <select
