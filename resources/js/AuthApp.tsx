@@ -10,6 +10,44 @@ type User = {
 
 type AuthMode = 'login' | 'register';
 
+function ProfileIcon() {
+    return (
+        <svg
+            viewBox="0 0 24 24"
+            width="19"
+            height="19"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.8"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            aria-hidden="true"
+        >
+            <circle cx="12" cy="8" r="4" />
+            <path d="M5 21v-2a7 7 0 0 1 14 0v2" />
+        </svg>
+    );
+}
+
+function KeyIcon() {
+    return (
+        <svg
+            viewBox="0 0 24 24"
+            width="19"
+            height="19"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.8"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            aria-hidden="true"
+        >
+            <circle cx="8" cy="15" r="5" />
+            <path d="m11.5 11.5 8-8L22 6l-2 2 2 2-3 3-2-2-2 2" />
+        </svg>
+    );
+}
+
 function AuthApp() {
     const [user, setUser] = useState<User | null>(null);
     const [mode, setMode] = useState<AuthMode>('login');
@@ -227,17 +265,23 @@ function AuthApp() {
                         <div className="auth-field">
                             <label htmlFor="auth-name">Full name</label>
 
-                            <input
-                                id="auth-name"
-                                type="text"
-                                value={name}
-                                onChange={(event) =>
-                                    setName(event.target.value)
-                                }
-                                autoComplete="name"
-                                required
-                                maxLength={255}
-                            />
+                            <div className="auth-input-wrapper">
+                                <span className="auth-input-icon">
+                                    <ProfileIcon />
+                                </span>
+
+                                <input
+                                    id="auth-name"
+                                    type="text"
+                                    value={name}
+                                    onChange={(event) =>
+                                        setName(event.target.value)
+                                    }
+                                    autoComplete="name"
+                                    required
+                                    maxLength={255}
+                                />
+                            </div>
 
                             {fieldError('name')}
                         </div>
@@ -246,16 +290,20 @@ function AuthApp() {
                     <div className="auth-field">
                         <label htmlFor="auth-email">Email address</label>
 
-                        <input
-                            id="auth-email"
-                            type="email"
-                            value={email}
-                            onChange={(event) =>
-                                setEmail(event.target.value)
-                            }
-                            autoComplete="email"
-                            required
-                        />
+                        <div className="auth-input-wrapper">
+                            <span className="auth-input-icon">
+                                <ProfileIcon />
+                            </span>
+
+                            <input
+                                id="auth-email"
+                                type="email"
+                                value={email}
+                                onChange={(event) => setEmail(event.target.value)}
+                                autoComplete="email"
+                                required
+                            />
+                        </div>
 
                         {fieldError('email')}
                     </div>
@@ -263,21 +311,25 @@ function AuthApp() {
                     <div className="auth-field">
                         <label htmlFor="auth-password">Password</label>
 
-                        <input
-                            id="auth-password"
-                            type="password"
-                            value={password}
-                            onChange={(event) =>
-                                setPassword(event.target.value)
-                            }
-                            autoComplete={
-                                mode === 'login'
-                                    ? 'current-password'
-                                    : 'new-password'
-                            }
-                            required
-                            minLength={8}
-                        />
+                        <div className="auth-input-wrapper">
+                            <span className="auth-input-icon">
+                                <KeyIcon />
+                            </span>
+
+                            <input
+                                id="auth-password"
+                                type="password"
+                                value={password}
+                                onChange={(event) => setPassword(event.target.value)}
+                                autoComplete={
+                                    mode === 'login'
+                                        ? 'current-password'
+                                        : 'new-password'
+                                }
+                                required
+                                minLength={8}
+                            />
+                        </div>
 
                         {fieldError('password')}
                     </div>
@@ -288,19 +340,23 @@ function AuthApp() {
                                 Confirm password
                             </label>
 
-                            <input
-                                id="auth-password-confirmation"
-                                type="password"
-                                value={passwordConfirmation}
-                                onChange={(event) =>
-                                    setPasswordConfirmation(
-                                        event.target.value,
-                                    )
-                                }
-                                autoComplete="new-password"
-                                required
-                                minLength={8}
-                            />
+                            <div className="auth-input-wrapper">
+                                <span className="auth-input-icon">
+                                    <KeyIcon />
+                                </span>
+
+                                <input
+                                    id="auth-password-confirmation"
+                                    type="password"
+                                    value={passwordConfirmation}
+                                    onChange={(event) =>
+                                        setPasswordConfirmation(event.target.value)
+                                    }
+                                    autoComplete="new-password"
+                                    required
+                                    minLength={8}
+                                />
+                            </div>
                         </div>
                     )}
 
